@@ -28,6 +28,9 @@ dist/
 # Local data
 data/tmp/
 data/cache/
+data_wakeword
+
+部署环境.md
 
 # Large models or private assets you may not want in git
 models/
