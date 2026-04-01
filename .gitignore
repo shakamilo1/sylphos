@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python packaging / cache
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Local data
+data/tmp/
+data/cache/
+
+# Large models or private assets you may not want in git
+models/
+wheelhouse/

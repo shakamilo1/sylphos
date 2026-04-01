@@ -1,0 +1,44 @@
+name: sylphos
+channels:
+  - conda-forge
+dependencies:
+  # ---- 基础 ----
+  - python=3.11
+  - fastapi
+  - uvicorn
+  - pydantic
+  - pyyaml
+  - python-dotenv
+  - orjson
+  - requests
+  - numpy
+
+  # ---- 音频与语音 ----
+  - sounddevice
+  - webrtcvad
+  - portaudio
+  - ffmpeg
+  - espeak-ng
+
+  # ---- TTS（可选）----
+  # piper 主要以独立二进制方式使用，conda 中无官方包
+  # 若未来需要高质量 TTS，可通过 pip 安装 coqui-tts
+  # - coqui-tts
+
+  # ---- 工具与开发 ----
+  - pip
+  - rich
+  - httpx
+  - pytest
+
+  # ---- 通过 pip 安装的包 ----
+  - pip:
+      # STT
+      - faster-whisper
+      - ctranslate2
+      - openwakeword
+      - modelcontextprotocol
+      # TTS
+      - edge-tts
+      # 可选增强
+      - coqui-tts
