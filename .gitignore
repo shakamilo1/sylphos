@@ -30,6 +30,12 @@ data/tmp/
 data/cache/
 data_wakeword
 
+
+*.docx
+*.DOCX
+data_wakeword/
+预训练模型log.txt
+log.md
 部署环境.md
 
 # Large models or private assets you may not want in git
