@@ -8,41 +8,44 @@ from typing import Optional
 
 try:
     from rich.logging import RichHandler
+
     _HAS_RICH = True
 except Exception:
     _HAS_RICH = False
 
 from sylphos.mcp.core import demo_run_once
+from sylphos.runtime.events import EventBus
 
 
 @dataclass
 class RuntimeConfig:
     """Sylphos 运行时的基础配置（后续可以慢慢扩展）."""
+
     name: str = "Sylphos"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     log_level: int = logging.INFO
 
 
 class RuntimeApp:
-    """
-    Sylphos Runtime 的最小骨架。
-
-    未来你会在这里：
-    - 初始化 LLM 客户端
-    - 初始化 MCP 客户端
-    - 启动事件循环 / 消息路由
-    """
+    """Sylphos Runtime 的轻量总线骨架。"""
 
     def __init__(self, config: Optional[RuntimeConfig] = None) -> None:
         self.config = config or RuntimeConfig()
         self.log = logging.getLogger("sylphos.runtime")
+        self.event_bus = EventBus()
+        self._started = False
 
     def start(self) -> None:
-        """启动运行时（当前版本：打印日志 + 跑一遍 MCP demo）."""
+        """启动运行时（当前版本：日志 + EventBus + MCP demo）."""
+        if self._started:
+            self.log.warning("Runtime already started")
+            return
+
         self.log.info("Starting %s runtime v%s", self.config.name, self.config.version)
-        self.log.info("Runtime is up. (minimal stub)")
+        self.log.info("Runtime EventBus ready")
         self.log.info("Running MCP demo roundtrip ...")
         self._demo_mcp_roundtrip()
+        self._started = True
 
     def _demo_mcp_roundtrip(self) -> None:
         """调用 sylphos.mcp.core.demo_run_once 并打印结果."""
@@ -50,10 +53,6 @@ class RuntimeApp:
         self.log.info("MCP demo response: %r", resp)
 
     def run_forever(self) -> None:
-        """
-        模拟一个“守护进程式”的主循环。
-        后续可以替换为 asyncio / 消息队列等。
-        """
         self.log.info("Entering main loop. Press Ctrl+C to exit.")
         try:
             while True:
@@ -63,7 +62,7 @@ class RuntimeApp:
             self.shutdown()
 
     def shutdown(self) -> None:
-        """清理资源并优雅退出."""
+        self._started = False
         self.log.info("Runtime shutdown complete.")
 
 
@@ -84,7 +83,6 @@ def configure_logging(level: int = logging.INFO) -> None:
 
 
 def main() -> None:
-    """作为模块入口的 main 函数."""
     config = RuntimeConfig()
     configure_logging(config.log_level)
 

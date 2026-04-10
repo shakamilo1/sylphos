@@ -1,0 +1,19 @@
+from __future__ import annotations
+
+from typing import Callable, Protocol
+
+import numpy as np
+
+
+class WakeWordEngine(Protocol):
+    def set_callback(self, callback: Callable[[str, float], None]) -> None: ...
+
+    def consume(self, audio: np.ndarray) -> None: ...
+
+    def pause(self) -> None: ...
+
+    def resume(self) -> None: ...
+
+    def reset(self) -> None: ...
+
+    def close(self) -> None: ...
