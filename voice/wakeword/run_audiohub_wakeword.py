@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-import time
 
 import config
 from audio_hub import AudioHub
 from command_recorder import CommandRecorder
-from controller import VoiceController
 from wakeword_consumer import WakeWordConsumer
+
+from sylphos.runtime.events import EventBus
+from sylphos.runtime.orchestrator import RuntimeOrchestrator
 
 
 def _choose_device_from_config():
@@ -21,6 +22,8 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
+
+    event_bus = EventBus()
 
     hub = AudioHub(
         device=_choose_device_from_config(),
@@ -56,14 +59,13 @@ def main() -> None:
         wakeword_model_relative_path=config.WAKEWORD_MODEL_RELATIVE_PATH,
     )
 
-    controller = VoiceController(
-        wakeword=wake,
-        recorder=recorder,
+    orchestrator = RuntimeOrchestrator(
+        event_bus=event_bus,
+        wakeword_engine=wake,
+        recorder_service=recorder,
         record_seconds=config.COMMAND_RECORD_SECONDS,
     )
-
-    wake.on_detect = controller.on_wake_detected
-    recorder.on_record_complete = controller.on_record_complete
+    orchestrator.start()
 
     hub.subscribe(wake.consume)
     hub.subscribe(recorder.consume)
@@ -76,11 +78,13 @@ def main() -> None:
         while True:
             cmd = input().strip().lower()
             if cmd == "r":
-                controller.resume_wakeword()
+                orchestrator.resume_wakeword()
     except KeyboardInterrupt:
         pass
     finally:
         hub.stop()
+        orchestrator.stop()
+        wake.close()
 
 
 if __name__ == "__main__":

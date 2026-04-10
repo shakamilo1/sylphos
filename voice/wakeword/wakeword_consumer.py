@@ -98,6 +98,9 @@ class WakeWordConsumer:
 
         raise ValueError(f"不支持的模型来源: {source}")
 
+    def set_callback(self, callback: Callable[[str, float], None]) -> None:
+        self.on_detect = callback
+
     def pause(self) -> None:
         self._enabled = False
         self._logger.info("唤醒检测已暂停")
@@ -112,6 +115,9 @@ class WakeWordConsumer:
     def reset(self) -> None:
         self._model.reset()
         self._logger.info("wakeword 模型状态已重置")
+
+    def close(self) -> None:
+        self._logger.info("WakeWordConsumer closed")
 
     def consume(self, audio: np.ndarray) -> None:
         if not self._enabled:
