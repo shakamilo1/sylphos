@@ -1,18 +1,33 @@
 from __future__ import annotations
 
+"""录音服务层：消费 AudioHub 的音频流并在指令结束时产出 WAV。
+
+该模块位于 voice.audio 层，支持两种结束策略：
+1) 定时模式（固定秒数）；
+2) VAD 模式（检测到说话结束后自动收尾）。
+
+录音完成后通过回调通知上层；当前主流程建议通过 EventBus 桥接该回调。
+"""
+
 import threading
 import time
 import wave
 from pathlib import Path
-from typing import Callable
+import logging
 
 import numpy as np
 
+from voice.audio.base import RecordCompleteCallback, RecorderEngine
 
-RecordCompleteCallback = Callable[[str | None, np.ndarray, int], None]
 
+class CommandRecorder(RecorderEngine):
+    """RecorderEngine 的默认实现。
 
-class CommandRecorder:
+    - 保留 timed / VAD 两种录音结束策略；
+    - 保留 on_record_complete 兼容回调；
+    - 推荐由 Recorder 事件桥接层把回调转换成 `recording.completed` 事件。
+    """
+
     def __init__(
         self,
         *,
@@ -21,7 +36,7 @@ class CommandRecorder:
         channels: int = 1,
         sample_width_bytes: int = 2,
         on_record_complete: RecordCompleteCallback | None = None,
-        save_mode: str = "latest",   # off / latest / archive
+        save_mode: str = "latest",  # off / latest / archive
         latest_filename: str = "latest_command.wav",
         vad_enabled: bool = True,
         vad_sample_rate: int = 16000,
@@ -58,24 +73,41 @@ class CommandRecorder:
         self._buffers: list[np.ndarray] = []
         self._record_until = 0.0
 
-        # VAD 状态
+        # VAD 运行时状态
         self._vad_model = None
         self._vad_ring_buffer: list[np.ndarray] = []
         self._vad_speech_started = False
         self._vad_last_speech_time = 0.0
         self._vad_last_check_time = 0.0
 
+        self._logger = logging.getLogger(self.__class__.__name__)
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
+
+    def set_callback(self, callback: RecordCompleteCallback | None) -> None:
+        """设置录音完成回调。
+
+        该方法用于统一 RecorderEngine 接口风格；
+        内部仍复用 `on_record_complete` 字段以兼容已有调用。
+        """
+        self.on_record_complete = callback
+
     def is_recording(self) -> bool:
+        """当前是否处于录音状态。"""
         with self._lock:
             return self._recording
 
     def start_recording(self, duration_seconds: float = 5.0) -> None:
+        """开始一次新的录音会话。
+
+        - `duration_seconds > 0`：固定时长录音（timed）。
+        - `duration_seconds <= 0`：进入 VAD 自动结束模式（vad）。
+        """
         with self._lock:
             self._buffers = []
             self._recording = True
 
+            # 每次新录音都重置 VAD 状态，避免旧会话污染。
             self._vad_ring_buffer = []
             self._vad_speech_started = False
             self._vad_last_speech_time = 0.0
@@ -94,6 +126,7 @@ class CommandRecorder:
                 print("[REC] vad mode")
 
     def consume(self, audio: np.ndarray) -> None:
+        """接收 AudioHub 分发的音频块并按当前模式处理。"""
         with self._lock:
             if not self._recording:
                 return
@@ -105,6 +138,7 @@ class CommandRecorder:
             self._consume_vad(audio)
 
     def _consume_timed(self, audio: np.ndarray) -> None:
+        """固定时长录音：持续缓存直到达到结束时间。"""
         should_save = False
 
         with self._lock:
@@ -113,6 +147,7 @@ class CommandRecorder:
 
             self._buffers.append(np.copy(audio))
 
+            # 到达截止时间后结束本次录音并触发保存。
             if time.time() >= self._record_until:
                 self._recording = False
                 should_save = True
@@ -121,6 +156,7 @@ class CommandRecorder:
             self._save_wav()
 
     def _consume_vad(self, audio: np.ndarray) -> None:
+        """VAD 模式：检测“开始说话/说话结束”并控制录音生命周期。"""
         now = time.time()
         chunk = np.copy(audio)
 
@@ -128,9 +164,8 @@ class CommandRecorder:
             if not self._recording:
                 return
 
-            # 预缓冲：为了避免句首被切掉
+            # 预缓冲：保留最近一段音频，防止句首被裁切。
             self._vad_ring_buffer.append(chunk)
-
             prebuffer_blocks = max(
                 1,
                 int(
@@ -141,22 +176,22 @@ class CommandRecorder:
             if len(self._vad_ring_buffer) > prebuffer_blocks:
                 self._vad_ring_buffer.pop(0)
 
-            # 如果已经正式开始说话，则持续收集
+            # 一旦进入“已说话”状态，后续音频都应落盘。
             if self._vad_speech_started:
                 self._buffers.append(chunk)
 
-            # 控制 VAD 检测频率
+            # 降低 VAD 计算频率，避免每个 chunk 都做重采样和推理。
             if (now - self._vad_last_check_time) * 1000 < self.vad_check_interval_ms:
                 return
 
             self._vad_last_check_time = now
-
             recent_audio = (
                 np.concatenate(self._buffers[-10:], axis=0)
                 if self._vad_speech_started and self._buffers
                 else np.concatenate(self._vad_ring_buffer, axis=0)
             )
 
+        # VAD 推理统一在 16k 采样率上完成。
         audio_16k = self._resample_to_vad_rate(recent_audio)
         has_speech = self._has_speech(audio_16k)
 
@@ -167,6 +202,7 @@ class CommandRecorder:
                 return
 
             if not self._vad_speech_started and has_speech:
+                # 首次检测到语音时，把预缓冲一起纳入正式录音。
                 self._vad_speech_started = True
                 self._vad_last_speech_time = now
                 self._buffers = list(self._vad_ring_buffer)
@@ -178,6 +214,7 @@ class CommandRecorder:
                     self._vad_last_speech_time = now
                 else:
                     silence_ms = (now - self._vad_last_speech_time) * 1000
+                    # 静音持续达到阈值，判定说话结束并收尾保存。
                     if silence_ms >= self.vad_end_silence_ms:
                         self._recording = False
                         should_save = True
@@ -187,6 +224,7 @@ class CommandRecorder:
             self._save_wav()
 
     def _ensure_vad_loaded(self) -> None:
+        """懒加载 Silero VAD 模型，仅在 VAD 模式首次使用时初始化。"""
         if self._vad_model is not None:
             return
 
@@ -195,6 +233,7 @@ class CommandRecorder:
         self._vad_model = load_silero_vad()
 
     def _resample_to_vad_rate(self, audio: np.ndarray) -> np.ndarray:
+        """将输入音频重采样到 VAD 采样率（默认 16k）。"""
         if self.input_rate == self.vad_sample_rate:
             return audio.astype(np.float32)
 
@@ -213,6 +252,7 @@ class CommandRecorder:
             return resample_poly(audio, up, down).astype(np.float32)
 
     def _has_speech(self, audio_16k: np.ndarray) -> bool:
+        """执行 VAD 检测并返回当前片段是否包含语音。"""
         if audio_16k.size == 0:
             return False
 
@@ -230,6 +270,7 @@ class CommandRecorder:
         return len(speech_ts) > 0
 
     def _save_wav(self) -> None:
+        """保存缓冲音频并触发录音完成回调。"""
         with self._lock:
             if not self._buffers:
                 return
@@ -265,3 +306,10 @@ class CommandRecorder:
 
         if self.on_record_complete:
             self.on_record_complete(str(out_path), audio_i16, self.input_rate)
+
+    def close(self) -> None:
+        """关闭录音器。
+
+        当前实现没有外部句柄需要释放，保留该方法用于协议一致性与未来扩展。
+        """
+        self._logger.info("CommandRecorder closed")

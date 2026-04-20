@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""语音链路配置。
+
+该模块提供 wakeword + 录音相关默认参数，并在可用时加载
+`config/local_config.py` 覆盖默认值（由 setup_wakeword 脚本生成）。
+"""
+
 # 音频输入
 AUDIO_INPUT_DEVICE_INDEX = None
 AUDIO_INPUT_DEVICE_NAME = None
@@ -17,7 +23,7 @@ WAKEWORD_THRESHOLD = 0.5
 WAKEWORD_COOLDOWN_SECONDS = 2.0
 
 # 录音
-RECORD_SAVE_MODE = "latest"   # off / latest / archive 三种录音
+RECORD_SAVE_MODE = "latest"  # off / latest / archive
 RECORDINGS_DIR = "recordings"
 LATEST_RECORD_FILENAME = "latest_command.wav"
 
@@ -38,6 +44,6 @@ VAD_SAMPLE_RATE = 16000
 
 
 try:
-    from local_config import *  # noqa: F403,F401
+    from config.local_config import *  # noqa: F403,F401
 except ImportError:
     pass
