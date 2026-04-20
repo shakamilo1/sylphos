@@ -6,14 +6,15 @@ from __future__ import annotations
 1) 定时模式（固定秒数）；
 2) VAD 模式（检测到说话结束后自动收尾）。
 
-录音完成后通过回调通知上层；当前主流程建议通过 EventBus 桥接该回调。
+录音完成后通过回调通知上层；当前主流程建议通过 EventBus 桥接该回调，
+将其转换为 `recording.completed` 事件。
 """
 
+import logging
 import threading
 import time
 import wave
 from pathlib import Path
-import logging
 
 import numpy as np
 
@@ -26,6 +27,9 @@ class CommandRecorder(RecorderEngine):
     - 保留 timed / VAD 两种录音结束策略；
     - 保留 on_record_complete 兼容回调；
     - 推荐由 Recorder 事件桥接层把回调转换成 `recording.completed` 事件。
+
+    该录音器通常由 Runtime 在收到录音请求后启动，
+    然后通过 AudioHub 持续调用 `consume` 喂入音频数据。
     """
 
     def __init__(
@@ -82,7 +86,6 @@ class CommandRecorder(RecorderEngine):
 
         self._logger = logging.getLogger(self.__class__.__name__)
         self.save_dir.mkdir(parents=True, exist_ok=True)
-
 
     def set_callback(self, callback: RecordCompleteCallback | None) -> None:
         """设置录音完成回调。
