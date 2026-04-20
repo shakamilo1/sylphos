@@ -19,6 +19,8 @@ class RuntimeEvent:
 
 @dataclass(slots=True)
 class WakeWordDetected(RuntimeEvent):
+    """唤醒词命中事件（由 WakeWordEngine 发布）。"""
+
     name: str = ""
     score: float = 0.0
 
@@ -32,7 +34,30 @@ class WakeWordDetected(RuntimeEvent):
 
 
 @dataclass(slots=True)
+class RecordingRequested(RuntimeEvent):
+    """录音请求事件。
+
+    用途：由编排层发布，通知 Recorder 组件“开始一次录音会话”。
+    消费者通常是 RecorderEventBridge。
+    """
+
+    duration_seconds: float = 0.0
+    mode: str = "vad"
+
+    def __init__(self, duration_seconds: float) -> None:
+        mode = "timed" if duration_seconds > 0 else "vad"
+        super().__init__(
+            event_type="recording.requested",
+            payload={"duration_seconds": duration_seconds, "mode": mode},
+        )
+        self.duration_seconds = duration_seconds
+        self.mode = mode
+
+
+@dataclass(slots=True)
 class RecordingCompleted(RuntimeEvent):
+    """录音完成事件（由 Recorder 侧发布）。"""
+
     wav_path: str | None = None
     sample_rate: int = 0
 

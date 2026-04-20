@@ -6,26 +6,30 @@ from __future__ import annotations
 1) 定时模式（固定秒数）；
 2) VAD 模式（检测到说话结束后自动收尾）。
 
-录音完成后通过 `on_record_complete` 回调通知上层编排器。
+录音完成后通过回调通知上层；当前主流程建议通过 EventBus 桥接该回调，
+将其转换为 `recording.completed` 事件。
 """
 
+import logging
 import threading
 import time
 import wave
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
+from voice.audio.base import RecordCompleteCallback, RecorderEngine
 
-RecordCompleteCallback = Callable[[str | None, np.ndarray, int], None]
 
+class CommandRecorder(RecorderEngine):
+    """RecorderEngine 的默认实现。
 
-class CommandRecorder:
-    """指令录音器。
+    - 保留 timed / VAD 两种录音结束策略；
+    - 保留 on_record_complete 兼容回调；
+    - 推荐由 Recorder 事件桥接层把回调转换成 `recording.completed` 事件。
 
-    由 RuntimeOrchestrator 在收到唤醒事件后触发 `start_recording`，
-    然后通过 AudioHub 持续调用 `consume` 喂入音频。
+    该录音器通常由 Runtime 在收到录音请求后启动，
+    然后通过 AudioHub 持续调用 `consume` 喂入音频数据。
     """
 
     def __init__(
@@ -80,7 +84,16 @@ class CommandRecorder:
         self._vad_last_speech_time = 0.0
         self._vad_last_check_time = 0.0
 
+        self._logger = logging.getLogger(self.__class__.__name__)
         self.save_dir.mkdir(parents=True, exist_ok=True)
+
+    def set_callback(self, callback: RecordCompleteCallback | None) -> None:
+        """设置录音完成回调。
+
+        该方法用于统一 RecorderEngine 接口风格；
+        内部仍复用 `on_record_complete` 字段以兼容已有调用。
+        """
+        self.on_record_complete = callback
 
     def is_recording(self) -> bool:
         """当前是否处于录音状态。"""
@@ -296,3 +309,10 @@ class CommandRecorder:
 
         if self.on_record_complete:
             self.on_record_complete(str(out_path), audio_i16, self.input_rate)
+
+    def close(self) -> None:
+        """关闭录音器。
+
+        当前实现没有外部句柄需要释放，保留该方法用于协议一致性与未来扩展。
+        """
+        self._logger.info("CommandRecorder closed")
