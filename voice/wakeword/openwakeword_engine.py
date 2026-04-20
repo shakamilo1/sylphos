@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""wakeword 领域层：OpenWakeWord 的适配实现。
+
+该模块实现了 wakeword 引擎的核心能力（consume/pause/resume/reset），
+供 RuntimeOrchestrator 通过统一接口调用。
+"""
+
 import importlib.resources as ir
 import logging
 import math
@@ -11,7 +17,9 @@ import numpy as np
 from openwakeword.model import Model
 
 
-class WakeWordConsumer:
+class OpenWakeWordEngine:
+    """OpenWakeWord 推理引擎适配器。"""
+
     def __init__(
         self,
         *,
@@ -38,12 +46,12 @@ class WakeWordConsumer:
         try:
             from samplerate import resample
 
-            def _to_16k(x: np.ndarray) -> np.ndarray:
+            def _to_target_rate(x: np.ndarray) -> np.ndarray:
                 return resample(
                     x, self.target_rate / self.input_rate, "sinc_fastest"
                 ).astype(np.float32)
 
-            self._resample = _to_16k
+            self._resample = _to_target_rate
         except Exception:
             from scipy.signal import resample_poly
 
@@ -51,14 +59,12 @@ class WakeWordConsumer:
             up = self.target_rate // g
             down = int(self.input_rate) // g
 
-            def _to_16k(x: np.ndarray) -> np.ndarray:
+            def _to_target_rate(x: np.ndarray) -> np.ndarray:
                 return resample_poly(x, up, down).astype(np.float32)
 
-            self._resample = _to_16k
+            self._resample = _to_target_rate
 
-        model_kwargs = {
-            "inference_framework": "onnx",
-        }
+        model_kwargs = {"inference_framework": "onnx"}
 
         model_path = self._resolve_model_path(
             source=wakeword_model_source,
@@ -77,6 +83,11 @@ class WakeWordConsumer:
         model_name: str | None,
         relative_path: str | None,
     ) -> Path | None:
+        """解析模型路径。
+
+        - `openwakeword_resource`：从 openwakeword 包内 resources/models 读取；
+        - `project_relative`：从项目相对路径加载自定义模型。
+        """
         if source == "openwakeword_resource":
             if not model_name:
                 return None
@@ -91,7 +102,7 @@ class WakeWordConsumer:
                 raise ValueError("project_relative 模式下必须提供 relative_path")
             model_path = Path(relative_path)
             if not model_path.is_absolute():
-                model_path = Path(__file__).resolve().parent / model_path
+                model_path = Path.cwd() / model_path
             if not model_path.exists():
                 raise FileNotFoundError(f"项目相对模型不存在: {model_path}")
             return model_path
@@ -99,34 +110,45 @@ class WakeWordConsumer:
         raise ValueError(f"不支持的模型来源: {source}")
 
     def set_callback(self, callback: Callable[[str, float], None]) -> None:
+        """注册唤醒命中后的回调，由 RuntimeOrchestrator 注入 EventBus 发布逻辑。"""
         self.on_detect = callback
 
     def pause(self) -> None:
+        """暂停检测（录音阶段调用，防止自激触发）。"""
         self._enabled = False
         self._logger.info("唤醒检测已暂停")
 
     def resume(self) -> None:
+        """恢复检测（手动恢复流程调用）。"""
         self._enabled = True
         self._logger.info("唤醒检测已恢复")
 
     def is_enabled(self) -> bool:
+        """返回当前是否允许执行唤醒检测。"""
         return self._enabled
 
     def reset(self) -> None:
+        """重置 openwakeword 内部状态。"""
         self._model.reset()
         self._logger.info("wakeword 模型状态已重置")
 
     def close(self) -> None:
-        self._logger.info("WakeWordConsumer closed")
+        """关闭引擎（当前仅保留日志钩子）。"""
+        self._logger.info("OpenWakeWordEngine closed")
 
     def consume(self, audio: np.ndarray) -> None:
+        """消费一段原始音频并进行 wakeword 推理。
+
+        调用链：AudioHub._audio_callback -> OpenWakeWordEngine.consume。
+        命中后触发 `on_detect(name, score)`，上层通常将其发布到 EventBus。
+        """
         if not self._enabled:
             return
 
-        audio16k = self._resample(audio)
-        audio16k_i16 = np.clip(audio16k * 32768.0, -32768, 32767).astype(np.int16)
+        audio_target = self._resample(audio)
+        audio_i16 = np.clip(audio_target * 32768.0, -32768, 32767).astype(np.int16)
 
-        scores = self._model.predict(audio16k_i16)
+        scores = self._model.predict(audio_i16)
         if not scores:
             return
 
@@ -149,3 +171,7 @@ class WakeWordConsumer:
 
         if self.on_detect:
             self.on_detect(max_name, max_score)
+
+
+# 兼容旧命名，避免外部调用方短期内中断。
+WakeWordConsumer = OpenWakeWordEngine
