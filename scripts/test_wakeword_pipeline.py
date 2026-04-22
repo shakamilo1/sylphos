@@ -11,18 +11,32 @@ import logging
 import time
 from pathlib import Path
 
-import sounddevice as sd
-
 from config import voice as voice_config
-from scripts.runtime_bootstrap import (
-    create_runtime_stack,
-    resolve_wakeword_model_path,
-    start_runtime_stack,
-    stop_runtime_stack,
-)
+from scripts.runtime_bootstrap import resolve_wakeword_model_path
+
+
+def _require_sounddevice():
+    """按需导入 sounddevice，避免 --help 依赖音频库。"""
+    try:
+        import sounddevice as sd
+
+        return sd
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "当前命令需要 sounddevice。请先在虚拟环境安装依赖后重试。"
+        ) from exc
+
+
+def _create_runtime_stack() -> dict[str, object]:
+    """按需导入运行装配，避免纯检查命令触发音频依赖。"""
+    from scripts.runtime_bootstrap import create_runtime_stack
+
+    return create_runtime_stack()
 
 
 def list_devices() -> None:
+    sd = _require_sounddevice()
+
     print("=== 输入设备列表 ===")
     for idx, dev in enumerate(sd.query_devices()):
         if dev["max_input_channels"] > 0:
@@ -34,15 +48,24 @@ def list_devices() -> None:
 
 def list_models() -> None:
     print("=== openwakeword 可用模型 ===")
-    model_dir = Path(str(ir.files("openwakeword") / "resources" / "models"))
-    models = sorted(model_dir.glob("*.onnx"))
+    try:
+        model_dir = Path(str(ir.files("openwakeword") / "resources" / "models"))
+        models = sorted(model_dir.glob("*.onnx"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"无法读取 openwakeword 内置模型目录：{exc}")
+        models = []
+        model_dir = None
+
     if not models:
         print("未找到模型。可运行 python download.py 下载。")
-        return
+    else:
+        print(f"模型目录: {model_dir}")
+        for p in models:
+            print(f"- {p.name}")
 
-    print(f"模型目录: {model_dir}")
-    for p in models:
-        print(f"- {p.name}")
+    if voice_config.WAKEWORD_MODEL_SOURCE == "project_relative":
+        resolved = resolve_wakeword_model_path()
+        print(f"当前配置 project_relative 路径: {resolved}")
 
 
 def show_config() -> None:
@@ -93,7 +116,13 @@ def check_config() -> int:
         print("[FAIL] BLOCKSIZE 必须 > 0")
         ok = False
 
-    model_path = resolve_wakeword_model_path()
+    try:
+        model_path = resolve_wakeword_model_path()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[FAIL] 模型路径解析失败: {exc}")
+        ok = False
+        model_path = None
+
     if model_path is not None and not model_path.exists():
         print(f"[FAIL] 模型文件不存在: {model_path}")
         ok = False
@@ -118,7 +147,7 @@ def check_config() -> int:
 
 def test_record(mode: str, duration: float) -> int:
     print(f"=== 录音测试（{mode}）===")
-    stack = create_runtime_stack()
+    stack = _create_runtime_stack()
     recorder = stack["recorder"]
     hub = stack["hub"]
 
@@ -155,7 +184,7 @@ def test_record(mode: str, duration: float) -> int:
 
 def test_wakeword_listen(duration: float) -> int:
     print(f"=== 唤醒监听测试（{duration:.1f}s）===")
-    stack = create_runtime_stack()
+    stack = _create_runtime_stack()
     hub = stack["hub"]
     wake = stack["wake"]
 
@@ -178,8 +207,10 @@ def test_wakeword_listen(duration: float) -> int:
 
 
 def test_full_pipeline(duration: float) -> int:
+    from scripts.runtime_bootstrap import start_runtime_stack, stop_runtime_stack
+
     print(f"=== 全链路测试（{duration:.1f}s）===")
-    stack = create_runtime_stack()
+    stack = _create_runtime_stack()
     start_runtime_stack(stack)
     try:
         print("全链路运行中：说唤醒词 -> 触发录音。")
@@ -229,25 +260,29 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "list-devices":
-        list_devices()
-        return 0
-    if args.command == "list-models":
-        list_models()
-        return 0
-    if args.command == "show-config":
-        show_config()
-        return 0
-    if args.command == "check-config":
-        return check_config()
-    if args.command == "test-timed-record":
-        return test_record("timed", args.duration)
-    if args.command == "test-vad-record":
-        return test_record("vad", args.duration)
-    if args.command == "test-wakeword-listen":
-        return test_wakeword_listen(args.duration)
-    if args.command == "test-full-pipeline":
-        return test_full_pipeline(args.duration)
+    try:
+        if args.command == "list-devices":
+            list_devices()
+            return 0
+        if args.command == "list-models":
+            list_models()
+            return 0
+        if args.command == "show-config":
+            show_config()
+            return 0
+        if args.command == "check-config":
+            return check_config()
+        if args.command == "test-timed-record":
+            return test_record("timed", args.duration)
+        if args.command == "test-vad-record":
+            return test_record("vad", args.duration)
+        if args.command == "test-wakeword-listen":
+            return test_wakeword_listen(args.duration)
+        if args.command == "test-full-pipeline":
+            return test_full_pipeline(args.duration)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
 
     parser.print_help()
     return 1

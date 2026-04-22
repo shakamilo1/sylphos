@@ -8,12 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from config import voice as voice_config
-from sylphos.runtime.events import EventBus
-from sylphos.runtime.orchestrator import RuntimeOrchestrator
-from voice.audio.event_bridge import RecorderEventBridge
-from voice.audio.hub import AudioHub
-from voice.audio.recorder import CommandRecorder
-from voice.wakeword.openwakeword_engine import OpenWakeWordEngine
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def choose_device_from_config() -> int | str | None:
@@ -40,7 +36,7 @@ def resolve_wakeword_model_path() -> Path | None:
             return None
         model_path = Path(voice_config.WAKEWORD_MODEL_RELATIVE_PATH)
         if not model_path.is_absolute():
-            model_path = Path.cwd() / model_path
+            model_path = PROJECT_ROOT / model_path
         return model_path
 
     return None
@@ -48,6 +44,13 @@ def resolve_wakeword_model_path() -> Path | None:
 
 def create_runtime_stack() -> dict[str, object]:
     """创建完整运行链路所需组件。"""
+    from sylphos.runtime.events import EventBus
+    from sylphos.runtime.orchestrator import RuntimeOrchestrator
+    from voice.audio.event_bridge import RecorderEventBridge
+    from voice.audio.hub import AudioHub
+    from voice.audio.recorder import CommandRecorder
+    from voice.wakeword.openwakeword_engine import OpenWakeWordEngine
+
     event_bus = EventBus()
 
     hub = AudioHub(

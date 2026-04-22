@@ -245,6 +245,11 @@ def main() -> None:
     vad_check_interval_ms = ask_int("VAD 检测间隔(ms)", int(voice_config.VAD_CHECK_INTERVAL_MS), min_value=1)
     vad_sample_rate = ask_int("VAD 采样率", int(voice_config.VAD_SAMPLE_RATE), min_value=8000)
 
+    if record_seconds <= 0 and not vad_enabled:
+        print("\n[错误] 当前配置无效：COMMAND_RECORD_SECONDS <= 0 时必须启用 VAD。")
+        print("请重新运行向导并开启 VAD，或将固定录音秒数设为 > 0。")
+        return
+
     write_local_config(
         {
             "device_index": device_index,

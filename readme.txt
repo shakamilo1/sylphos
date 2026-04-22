@@ -54,8 +54,9 @@ Sylphos（当前仓库版本）使用说明
 脚本会调用 openwakeword 的下载函数，把模型放到 openwakeword 包目录下的：
 - .../site-packages/openwakeword/resources/models
 
-若你使用 project_relative 模式（配置里 WAKEWORD_MODEL_SOURCE=project_relative），则模型文件由你自行放置并填写相对路径，如：
+若你使用 project_relative 模式（配置里 WAKEWORD_MODEL_SOURCE=project_relative），模型相对路径统一按“项目根目录”解析；例如：
 - models/wakeword/your_model.onnx
+会被解析为：<项目根目录>/models/wakeword/your_model.onnx
 
 四、配置覆盖关系
 ---------------
