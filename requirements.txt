@@ -1,0 +1,6 @@
+openwakeword
+onnxruntime
+numpy
+sounddevice
+silero-vad
+scipy
