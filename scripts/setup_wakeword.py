@@ -2,12 +2,9 @@ from __future__ import annotations
 
 """WakeWord 配置向导。
 
-脚本层职责：
-1) 引导用户选择输入设备与 wakeword 模型；
-2) 采集阈值/冷却/录音参数；
-3) 将覆盖配置写入 `config/local_config.py`。
-
-推荐从项目根目录运行：`python -m scripts.setup_wakeword`。
+基于当前仓库真实配置机制：
+- 默认配置：config/voice.py
+- 本地覆盖：config/local_config.py
 """
 
 import importlib.resources as ir
@@ -15,127 +12,192 @@ from pathlib import Path
 
 import sounddevice as sd
 
+from config import voice as voice_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_CONFIG_PATH = BASE_DIR / "config" / "local_config.py"
 
 
 def get_openwakeword_model_dir() -> Path:
-    """返回 openwakeword 包内默认模型目录。"""
     return Path(str(ir.files("openwakeword") / "resources" / "models"))
 
 
 def list_input_devices() -> list[tuple[int, dict]]:
-    """列出系统可用输入设备并返回候选列表。"""
     devices = sd.query_devices()
     result: list[tuple[int, dict]] = []
 
     print("\n可用输入设备：")
-    print("-" * 80)
+    print("-" * 90)
     for idx, dev in enumerate(devices):
         if dev["max_input_channels"] > 0:
             result.append((idx, dev))
             print(
-                f"[{idx}] {dev['name']} | "
-                f"in={dev['max_input_channels']} | "
-                f"default_sr={dev['default_samplerate']}"
+                f"[{idx}] {dev['name']} | in={dev['max_input_channels']} | "
+                f"default_sr={int(dev['default_samplerate'])}"
             )
-    print("-" * 80)
+    print("-" * 90)
     return result
 
 
-def choose_input_device() -> tuple[int | None, str | None, int]:
-    """设备选择流程：用户可选具体设备，也可回车使用系统默认。"""
-    devices = list_input_devices()
-
-    if not devices:
-        print("未发现可用输入设备，将使用系统默认设备。")
-        return None, None, 44100
-
-    raw = input("请选择输入设备编号（直接回车=系统默认）: ").strip()
-    if not raw:
-        print("已选择：系统默认输入设备")
-        return None, None, 44100
-
-    idx = int(raw)
-    dev = sd.query_devices(idx)
-    name = str(dev["name"])
-    sr = int(dev["default_samplerate"])
-    print(f"已选择设备：[{idx}] {name}")
-    return idx, name, sr
-
-
-def list_models(model_dir: Path) -> list[Path]:
-    """列出指定目录中的 .onnx 模型。"""
-    models = sorted(model_dir.glob("*.onnx"))
-
-    print("\n可用 wakeword 模型：")
-    print("-" * 80)
-    for i, p in enumerate(models, start=1):
-        print(f"[{i}] {p.name}")
-    print("-" * 80)
-
-    return models
-
-
-def choose_model() -> tuple[str, str | None, str]:
-    """模型选择流程，当前默认走 openwakeword_resource。"""
-    default_dir = get_openwakeword_model_dir()
-
-    print("\n默认模型来源：openwakeword_resource")
-    print(f"模型目录：{default_dir}")
-
-    models = list_models(default_dir)
-    if not models:
-        raise FileNotFoundError(f"目录中未找到 .onnx 模型：{default_dir}")
-
-    raw = input("请选择模型编号: ").strip()
-    if not raw:
-        raise ValueError("必须选择一个模型编号。")
-
-    selected = models[int(raw) - 1]
-    print(f"已选择模型：{selected.name}")
-
-    # source, relative_path, model_name
-    return "openwakeword_resource", None, selected.name
-
-
 def ask_with_default(prompt: str, default: str) -> str:
-    """读取用户输入，空输入时采用默认值。"""
     raw = input(f"{prompt}（默认 {default}）: ").strip()
     return raw if raw else default
 
 
-def write_local_config(
-    *,
-    device_index: int | None,
-    device_name: str | None,
-    input_rate: int,
-    model_source: str,
-    model_relative_path: str | None,
-    model_name: str,
-    threshold: float,
-    cooldown: float,
-    recordings_dir: str,
-    record_seconds: float,
-) -> None:
-    """将向导结果写入 config/local_config.py。"""
-    content = f'''AUDIO_INPUT_DEVICE_INDEX = {repr(device_index)}
-AUDIO_INPUT_DEVICE_NAME = {repr(device_name)}
+def ask_int(prompt: str, default: int, *, min_value: int | None = None) -> int:
+    while True:
+        raw = ask_with_default(prompt, str(default))
+        try:
+            value = int(raw)
+            if min_value is not None and value < min_value:
+                print(f"输入必须 >= {min_value}，请重试。")
+                continue
+            return value
+        except ValueError:
+            print("请输入整数。")
 
-INPUT_RATE = {input_rate}
-CHANNELS = 1
-BLOCKSIZE = 4410
-DTYPE = "float32"
 
-WAKEWORD_MODEL_SOURCE = {repr(model_source)}
-WAKEWORD_MODEL_NAME = {repr(model_name)}
-WAKEWORD_MODEL_RELATIVE_PATH = {repr(model_relative_path)}
-WAKEWORD_THRESHOLD = {threshold}
-WAKEWORD_COOLDOWN_SECONDS = {cooldown}
+def ask_float(prompt: str, default: float, *, min_value: float | None = None) -> float:
+    while True:
+        raw = ask_with_default(prompt, str(default))
+        try:
+            value = float(raw)
+            if min_value is not None and value < min_value:
+                print(f"输入必须 >= {min_value}，请重试。")
+                continue
+            return value
+        except ValueError:
+            print("请输入数字。")
 
-RECORDINGS_DIR = {repr(recordings_dir)}
-COMMAND_RECORD_SECONDS = {record_seconds}
+
+def ask_bool(prompt: str, default: bool) -> bool:
+    default_text = "y" if default else "n"
+    while True:
+        raw = ask_with_default(f"{prompt} [y/n]", default_text).lower()
+        if raw in {"y", "yes", "1"}:
+            return True
+        if raw in {"n", "no", "0"}:
+            return False
+        print("请输入 y 或 n。")
+
+
+def choose_input_device() -> tuple[int | None, str | None, int]:
+    devices = list_input_devices()
+
+    if not devices:
+        print("未发现可用输入设备，将使用系统默认设备。")
+        return None, None, int(voice_config.INPUT_RATE)
+
+    while True:
+        raw = input("请选择输入设备编号（直接回车=系统默认）: ").strip()
+        if not raw:
+            print("已选择：系统默认输入设备")
+            return None, None, int(voice_config.INPUT_RATE)
+
+        try:
+            idx = int(raw)
+        except ValueError:
+            print("编号必须是整数，请重试。")
+            continue
+
+        try:
+            dev = sd.query_devices(idx)
+        except Exception as exc:
+            print(f"设备编号无效：{exc}")
+            continue
+
+        if dev["max_input_channels"] <= 0:
+            print("该设备不是输入设备，请重试。")
+            continue
+
+        name = str(dev["name"])
+        sr = int(dev["default_samplerate"])
+        print(f"已选择设备：[{idx}] {name}")
+        return idx, name, sr
+
+
+def choose_model() -> tuple[str, str | None, str | None]:
+    while True:
+        print("\nwakeword 模型来源：")
+        print("[1] openwakeword_resource（openwakeword 包内模型）")
+        print("[2] project_relative（项目相对路径）")
+        mode = ask_with_default("请选择模型来源编号", "1")
+
+        if mode == "1":
+            default_dir = get_openwakeword_model_dir()
+            models = sorted(default_dir.glob("*.onnx"))
+            print(f"\nopenwakeword 模型目录：{default_dir}")
+            if not models:
+                print("未找到任何 .onnx 模型，请先执行模型下载。")
+                continue
+
+            for i, p in enumerate(models, start=1):
+                print(f"[{i}] {p.name}")
+
+            while True:
+                pick = ask_with_default("请选择模型编号", "1")
+                try:
+                    selected = models[int(pick) - 1]
+                    return "openwakeword_resource", None, selected.name
+                except Exception:
+                    print("模型编号无效，请重试。")
+
+        if mode == "2":
+            rel = ask_with_default("请输入模型相对路径（例如 models/wakeword/your_model.onnx）", "models/wakeword/hey_jarvis_v0.1.onnx")
+            model_path = Path(rel)
+            if not model_path.is_absolute():
+                model_path = BASE_DIR / model_path
+            if not model_path.exists():
+                print(f"模型文件不存在：{model_path}")
+                continue
+            return "project_relative", rel, None
+
+        print("来源编号无效，请输入 1 或 2。")
+
+
+def choose_record_mode() -> str:
+    print("\n录音保存模式：")
+    print("[1] latest（仅保留最新一条）")
+    print("[2] archive（每次保存独立文件）")
+    print("[3] off（不保存文件，仅回调）")
+    mapping = {"1": "latest", "2": "archive", "3": "off"}
+
+    while True:
+        raw = ask_with_default("请选择保存模式编号", "1")
+        if raw in mapping:
+            return mapping[raw]
+        print("输入无效，请输入 1/2/3。")
+
+
+def write_local_config(config_data: dict[str, object]) -> None:
+    content = f'''AUDIO_INPUT_DEVICE_INDEX = {repr(config_data['device_index'])}
+AUDIO_INPUT_DEVICE_NAME = {repr(config_data['device_name'])}
+
+INPUT_RATE = {config_data['input_rate']}
+CHANNELS = {config_data['channels']}
+BLOCKSIZE = {config_data['blocksize']}
+DTYPE = {repr(config_data['dtype'])}
+
+WAKEWORD_MODEL_SOURCE = {repr(config_data['model_source'])}
+WAKEWORD_MODEL_NAME = {repr(config_data['model_name'])}
+WAKEWORD_MODEL_RELATIVE_PATH = {repr(config_data['model_relative_path'])}
+WAKEWORD_THRESHOLD = {config_data['threshold']}
+WAKEWORD_COOLDOWN_SECONDS = {config_data['cooldown']}
+
+RECORD_SAVE_MODE = {repr(config_data['record_save_mode'])}
+RECORDINGS_DIR = {repr(config_data['recordings_dir'])}
+LATEST_RECORD_FILENAME = {repr(config_data['latest_filename'])}
+
+COMMAND_RECORD_SECONDS = {config_data['record_seconds']}
+VAD_ENABLED = {config_data['vad_enabled']}
+VAD_THRESHOLD = {config_data['vad_threshold']}
+VAD_MIN_SPEECH_DURATION_MS = {config_data['vad_min_speech_duration_ms']}
+VAD_MIN_SILENCE_DURATION_MS = {config_data['vad_min_silence_duration_ms']}
+VAD_SPEECH_PAD_MS = {config_data['vad_speech_pad_ms']}
+VAD_END_SILENCE_MS = {config_data['vad_end_silence_ms']}
+VAD_PREBUFFER_MS = {config_data['vad_prebuffer_ms']}
+VAD_CHECK_INTERVAL_MS = {config_data['vad_check_interval_ms']}
+VAD_SAMPLE_RATE = {config_data['vad_sample_rate']}
 '''
 
     LOCAL_CONFIG_PATH.write_text(content, encoding="utf-8")
@@ -143,32 +205,81 @@ COMMAND_RECORD_SECONDS = {record_seconds}
 
 
 def main() -> None:
-    """配置入口：按“设备 -> 模型 -> 参数 -> 写入配置”顺序执行。"""
-    print("=== Sylphos wakeword 配置向导 ===")
+    print("=== Sylphos 配置向导（wakeword + 录音）===")
 
     device_index, device_name, detected_sr = choose_input_device()
     model_source, model_relative_path, model_name = choose_model()
 
-    input_rate = int(
-        ask_with_default("输入采样率", str(detected_sr if detected_sr > 0 else 44100))
+    input_rate = ask_int("输入采样率", detected_sr if detected_sr > 0 else int(voice_config.INPUT_RATE), min_value=8000)
+    channels = ask_int("声道数", int(voice_config.CHANNELS), min_value=1)
+    blocksize = ask_int("blocksize", int(voice_config.BLOCKSIZE), min_value=1)
+    dtype = ask_with_default("dtype", str(voice_config.DTYPE))
+
+    threshold = ask_float("唤醒阈值", float(voice_config.WAKEWORD_THRESHOLD), min_value=0.0)
+    cooldown = ask_float("唤醒冷却秒数", float(voice_config.WAKEWORD_COOLDOWN_SECONDS), min_value=0.0)
+
+    recordings_dir = ask_with_default("录音保存目录", str(voice_config.RECORDINGS_DIR))
+    record_save_mode = choose_record_mode()
+    latest_filename = ask_with_default("latest 模式文件名", str(voice_config.LATEST_RECORD_FILENAME))
+
+    record_seconds = ask_float(
+        "固定录音秒数（<=0 表示改用 VAD 自动结束）",
+        float(voice_config.COMMAND_RECORD_SECONDS),
     )
-    threshold = float(ask_with_default("唤醒阈值", "0.5"))
-    cooldown = float(ask_with_default("唤醒冷却秒数", "2.0"))
-    recordings_dir = ask_with_default("录音保存目录", "recordings")
-    record_seconds = float(ask_with_default("固定录音秒数", "5.0"))
+    vad_enabled = ask_bool("启用 VAD", bool(voice_config.VAD_ENABLED))
+
+    vad_threshold = ask_float("VAD 阈值", float(voice_config.VAD_THRESHOLD), min_value=0.0)
+    vad_min_speech_duration_ms = ask_int(
+        "VAD 最短语音时长(ms)",
+        int(voice_config.VAD_MIN_SPEECH_DURATION_MS),
+        min_value=1,
+    )
+    vad_min_silence_duration_ms = ask_int(
+        "VAD 最短静音时长(ms)",
+        int(voice_config.VAD_MIN_SILENCE_DURATION_MS),
+        min_value=1,
+    )
+    vad_speech_pad_ms = ask_int("VAD speech_pad(ms)", int(voice_config.VAD_SPEECH_PAD_MS), min_value=0)
+    vad_end_silence_ms = ask_int("VAD 结束静音阈值(ms)", int(voice_config.VAD_END_SILENCE_MS), min_value=1)
+    vad_prebuffer_ms = ask_int("VAD 预缓冲(ms)", int(voice_config.VAD_PREBUFFER_MS), min_value=0)
+    vad_check_interval_ms = ask_int("VAD 检测间隔(ms)", int(voice_config.VAD_CHECK_INTERVAL_MS), min_value=1)
+    vad_sample_rate = ask_int("VAD 采样率", int(voice_config.VAD_SAMPLE_RATE), min_value=8000)
+
+    if record_seconds <= 0 and not vad_enabled:
+        print("\n[错误] 当前配置无效：COMMAND_RECORD_SECONDS <= 0 时必须启用 VAD。")
+        print("请重新运行向导并开启 VAD，或将固定录音秒数设为 > 0。")
+        return
 
     write_local_config(
-        device_index=device_index,
-        device_name=device_name,
-        input_rate=input_rate,
-        model_source=model_source,
-        model_relative_path=model_relative_path,
-        model_name=model_name,
-        threshold=threshold,
-        cooldown=cooldown,
-        recordings_dir=recordings_dir,
-        record_seconds=record_seconds,
+        {
+            "device_index": device_index,
+            "device_name": device_name,
+            "input_rate": input_rate,
+            "channels": channels,
+            "blocksize": blocksize,
+            "dtype": dtype,
+            "model_source": model_source,
+            "model_relative_path": model_relative_path,
+            "model_name": model_name,
+            "threshold": threshold,
+            "cooldown": cooldown,
+            "recordings_dir": recordings_dir,
+            "record_save_mode": record_save_mode,
+            "latest_filename": latest_filename,
+            "record_seconds": record_seconds,
+            "vad_enabled": vad_enabled,
+            "vad_threshold": vad_threshold,
+            "vad_min_speech_duration_ms": vad_min_speech_duration_ms,
+            "vad_min_silence_duration_ms": vad_min_silence_duration_ms,
+            "vad_speech_pad_ms": vad_speech_pad_ms,
+            "vad_end_silence_ms": vad_end_silence_ms,
+            "vad_prebuffer_ms": vad_prebuffer_ms,
+            "vad_check_interval_ms": vad_check_interval_ms,
+            "vad_sample_rate": vad_sample_rate,
+        }
     )
+
+    print("\n配置完成。建议下一步运行：python -m scripts.test_wakeword_pipeline show-config")
 
 
 if __name__ == "__main__":
