@@ -17,6 +17,9 @@ import numpy as np
 from openwakeword.model import Model
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 class OpenWakeWordEngine:
     """OpenWakeWord 推理引擎适配器。"""
 
@@ -102,7 +105,7 @@ class OpenWakeWordEngine:
                 raise ValueError("project_relative 模式下必须提供 relative_path")
             model_path = Path(relative_path)
             if not model_path.is_absolute():
-                model_path = Path.cwd() / model_path
+                model_path = PROJECT_ROOT / model_path
             if not model_path.exists():
                 raise FileNotFoundError(f"项目相对模型不存在: {model_path}")
             return model_path
