@@ -41,3 +41,8 @@ log.md
 # Large models or private assets you may not want in git
 models/
 wheelhouse/
+.venv-asr/
+.cache/
+recordings/*.wav
+recordings/*.mp3
+recordings/*.flac
