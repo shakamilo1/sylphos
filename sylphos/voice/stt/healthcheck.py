@@ -93,13 +93,22 @@ def main() -> None:
         payload["elapsed_seconds"] = time.perf_counter() - started
         return emit(payload, args.json)
 
+    # 是否由用户“显式”要求识别某个音频。
+    # - args.audio: 指定了具体路径
+    # - args.latest: 指定了 latest 文件
+    # 这个标志用于区分 warmup-only 场景，避免被自动 latest 选择干扰。
+    explicit_audio_requested = bool(args.audio or args.latest)
+    warmup_only = bool(args.warmup and not explicit_audio_requested)
+
     audio_path: Path | None = None
     selected_by_default = False
     if args.audio:
         audio_path = Path(args.audio).expanduser().resolve()
     elif args.latest:
         audio_path = latest_path
-    elif latest_path.exists():
+    # 仅在“非 warmup-only”时才自动回退到 latest，
+    # 确保 `--warmup PATH` 不会触发额外识别。
+    elif (not warmup_only) and latest_path.exists():
         audio_path = latest_path
         selected_by_default = True
 
@@ -127,7 +136,8 @@ def main() -> None:
             _ = engine.transcribe_file(warmup_path)
             payload["warmup_seconds"] = time.perf_counter() - warmup_start
 
-            if audio_path is None:
+            # warmup-only: 用户只希望做模型预热，不希望进入识别阶段。
+            if warmup_only:
                 payload["next_step"] = "预热完成。若需识别，请加 --audio 或 --latest。"
                 payload["elapsed_seconds"] = time.perf_counter() - started
                 return emit(payload, args.json)
