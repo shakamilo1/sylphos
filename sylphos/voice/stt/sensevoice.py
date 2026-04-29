@@ -7,6 +7,7 @@ from typing import Any
 from .base import ASRResult
 
 _TAG_PATTERN = re.compile(r"<\|[^|]+\|>")
+_LANGUAGE_TAG_PATTERN = re.compile(r"<\|(zh|en|yue|ja|ko)\|>", re.IGNORECASE)
 _INSTALL_HINT = (
     "缺少 ASR 依赖（funasr / torch / modelscope）。"
     "请先运行：pip install -r requirements-asr.txt"
@@ -71,6 +72,7 @@ class SenseVoiceEngine:
 
         parsed = self._parse_result(result)
         raw_text = parsed.get("raw_text")
+        tag_language = self._extract_language_from_raw_text(raw_text or "")
         cleaned_text = self._clean_text(raw_text or "")
 
         metadata = {
@@ -86,7 +88,7 @@ class SenseVoiceEngine:
         return ASRResult(
             text=cleaned_text,
             raw_text=raw_text,
-            language=parsed.get("language") or self.language,
+            language=tag_language or parsed.get("language") or self.language,
             audio_path=path,
             metadata=metadata,
         )
@@ -109,6 +111,12 @@ class SenseVoiceEngine:
             text = str(first)
 
         return {"raw_text": str(text), "language": language}
+
+    def _extract_language_from_raw_text(self, raw_text: str) -> str | None:
+        match = _LANGUAGE_TAG_PATTERN.search(raw_text)
+        if not match:
+            return None
+        return match.group(1).lower()
 
     def _clean_text(self, raw_text: str) -> str:
         cleaned = _TAG_PATTERN.sub("", raw_text)

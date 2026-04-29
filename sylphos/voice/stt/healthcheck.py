@@ -70,18 +70,27 @@ def main() -> None:
         "model": args.model,
         "device": args.device,
         "audio_path": None,
+        "warmup_audio_path": None,
+        "warmup_seconds": 0.0,
         "text": None,
         "raw_text": None,
         "language": args.language,
         "elapsed_seconds": 0.0,
         "inference_seconds": 0.0,
+        "dependencies_ok": False,
+        "dependency_errors": [],
+        "next_step": "",
         "errors": [],
     }
 
     deps_ok, dep_errors = check_imports()
+    payload["dependencies_ok"] = deps_ok
+    payload["dependency_errors"] = dep_errors
     if not deps_ok:
         payload["ok"] = False
         payload["errors"].extend(dep_errors)
+        payload["next_step"] = "先安装依赖后重试: pip install -r requirements-asr.txt"
+        payload["elapsed_seconds"] = time.perf_counter() - started
         return emit(payload, args.json)
 
     audio_path: Path | None = None
@@ -107,11 +116,21 @@ def main() -> None:
         )
 
         if args.download_only:
+            payload["next_step"] = "模型已加载，可视为下载完成。"
             payload["elapsed_seconds"] = time.perf_counter() - started
-            return emit(payload, args.json, note="模型已加载，可视为下载完成。")
+            return emit(payload, args.json)
 
         if args.warmup:
-            _ = engine.transcribe_file(args.warmup)
+            warmup_path = Path(args.warmup).expanduser().resolve()
+            payload["warmup_audio_path"] = str(warmup_path)
+            warmup_start = time.perf_counter()
+            _ = engine.transcribe_file(warmup_path)
+            payload["warmup_seconds"] = time.perf_counter() - warmup_start
+
+            if audio_path is None:
+                payload["next_step"] = "预热完成。若需识别，请加 --audio 或 --latest。"
+                payload["elapsed_seconds"] = time.perf_counter() - started
+                return emit(payload, args.json)
 
         if audio_path is not None:
             payload["audio_path"] = str(audio_path)
@@ -133,18 +152,15 @@ def main() -> None:
             engine.close()
 
     payload["elapsed_seconds"] = time.perf_counter() - started
-    note = None
     if selected_by_default:
-        note = f"未指定音频，自动使用默认 latest 文件: {latest_path}"
-    elif audio_path is None:
-        note = "未提供音频。下一步可运行: python -m sylphos.voice.stt.healthcheck --latest --device cpu"
+        payload["next_step"] = f"未指定音频，自动使用默认 latest 文件: {latest_path}"
+    elif audio_path is None and not payload["next_step"]:
+        payload["next_step"] = "未提供音频。下一步可运行: python -m sylphos.voice.stt.healthcheck --latest --device cpu"
 
-    emit(payload, args.json, note=note)
+    emit(payload, args.json)
 
 
-def emit(payload: dict[str, Any], as_json: bool, note: str | None = None) -> None:
-    if note:
-        payload["next_step"] = note
+def emit(payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -155,7 +171,13 @@ def emit(payload: dict[str, Any], as_json: bool, note: str | None = None) -> Non
     print(f"Project root: {payload['project_root']}")
     print(f"Model: {payload['model']}")
     print(f"Device: {payload['device']}")
-    print("Dependencies: PASS" if not payload["errors"] else "Dependencies: CHECK ERRORS")
+    print("Dependencies: PASS" if payload["dependencies_ok"] else "Dependencies: FAIL")
+    if payload["dependency_errors"]:
+        print("Dependency errors:")
+        for err in payload["dependency_errors"]:
+            print(f"- {err}")
+    print(f"Warmup audio path: {payload['warmup_audio_path']}")
+    print(f"Warmup seconds: {payload['warmup_seconds']:.3f}")
     print(f"Audio path: {payload['audio_path']}")
     print(f"Text: {payload['text']}")
     print(f"Raw text: {payload['raw_text']}")
@@ -166,8 +188,8 @@ def emit(payload: dict[str, Any], as_json: bool, note: str | None = None) -> Non
         print("Errors:")
         for err in payload["errors"]:
             print(f"- {err}")
-    if note:
-        print(f"Next: {note}")
+    if payload["next_step"]:
+        print(f"Next: {payload['next_step']}")
 
 
 if __name__ == "__main__":
