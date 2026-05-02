@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sylphos.runtime.events import EventBus, RecordingCompleted, RuntimeEvent
+from sylphos.runtime.stt_handler import STTHandler
+
 from .factory import create_stt_engine
 
 
@@ -51,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup", type=str, default=None)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--project-root", type=str, default=None)
+    parser.add_argument("--runtime", action="store_true", help="通过 EventBus + STTHandler 模拟完整链路")
     parser.add_argument("--debug", action="store_true")
     return parser
 
@@ -81,6 +85,8 @@ def main() -> None:
         "dependency_errors": [],
         "next_step": "",
         "errors": [],
+        "event_published": False,
+        "events": [],
     }
 
     deps_ok, dep_errors = check_imports()
@@ -142,7 +148,38 @@ def main() -> None:
                 payload["elapsed_seconds"] = time.perf_counter() - started
                 return emit(payload, args.json)
 
-        if audio_path is not None:
+        if audio_path is not None and args.runtime:
+            payload["audio_path"] = str(audio_path)
+            event_bus = EventBus()
+
+            def _collector(event: RuntimeEvent) -> None:
+                payload["events"].append({"event_type": event.event_type, "payload": event.payload})
+
+            event_bus.subscribe("asr.completed", _collector)
+            handler = STTHandler(
+                event_bus=event_bus,
+                stt_provider="sensevoice",
+                model=args.model,
+                device=args.device,
+                language=args.language,
+                use_itn=args.use_itn,
+                vad_model=args.vad_model,
+                disable_update=True,
+            )
+            handler.start()
+            infer_start = time.perf_counter()
+            # 关键节点：模拟 Recorder 发布 recording.completed 事件。
+            event_bus.publish(RecordingCompleted(wav_path=str(audio_path), sample_rate=16000))
+            payload["inference_seconds"] = time.perf_counter() - infer_start
+            handler.stop()
+
+            payload["event_published"] = bool(payload["events"])
+            if payload["events"]:
+                asr_payload = payload["events"][-1]["payload"]
+                payload["text"] = asr_payload.get("text")
+                payload["raw_text"] = asr_payload.get("raw_text")
+                payload["language"] = asr_payload.get("language")
+        elif audio_path is not None:
             payload["audio_path"] = str(audio_path)
             infer_start = time.perf_counter()
             result = engine.transcribe_file(audio_path)
@@ -192,6 +229,8 @@ def emit(payload: dict[str, Any], as_json: bool) -> None:
     print(f"Text: {payload['text']}")
     print(f"Raw text: {payload['raw_text']}")
     print(f"Language: {payload['language']}")
+    print(f"Event published: {payload['event_published']}")
+    print(f"Events: {payload['events']}")
     print(f"Inference seconds: {payload['inference_seconds']:.3f}")
     print(f"Elapsed seconds: {payload['elapsed_seconds']:.3f}")
     if payload["errors"]:

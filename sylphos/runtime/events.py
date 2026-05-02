@@ -70,6 +70,42 @@ class RecordingCompleted(RuntimeEvent):
         self.sample_rate = sample_rate
 
 
+@dataclass(slots=True)
+class ASRCompleted(RuntimeEvent):
+    """语音识别完成事件（由 STTHandler 发布）。"""
+
+    audio_path: str | None = None
+    text: str = ""
+    raw_text: str | None = None
+    language: str | None = None
+    metadata: dict | None = None
+
+    def __init__(
+        self,
+        *,
+        audio_path: str | None,
+        text: str,
+        raw_text: str | None,
+        language: str | None,
+        metadata: dict | None,
+    ) -> None:
+        super(ASRCompleted, self).__init__(
+            event_type="asr.completed",
+            payload={
+                "audio_path": audio_path,
+                "text": text,
+                "raw_text": raw_text,
+                "language": language,
+                "metadata": metadata or {},
+            },
+        )
+        self.audio_path = audio_path
+        self.text = text
+        self.raw_text = raw_text
+        self.language = language
+        self.metadata = metadata or {}
+
+
 EventHandler = Callable[[RuntimeEvent], None]
 
 
