@@ -1,4 +1,5 @@
 funasr
 modelscope
+textdistance
 torch
 torchaudio
