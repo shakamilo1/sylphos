@@ -36,38 +36,129 @@ Sylphos 当前版本使用说明（语音链路）
 
 三、从零开始安装（Windows + 项目内 .venv）
 ----------------------------------------
-### 1) 拉取仓库
-```bash
-git clone <你的仓库地址>
-```
+可以，操作上就是标准流程，把 GitHub 上最新的 PR 拉到本地，然后在你的 Windows + `.venv` 环境里跑测试。步骤如下：
 
-### 2) 进入项目目录
-```bash
+---
+
+## 1️⃣ 拉取仓库
+
+```powershell
+# 先 clone 仓库（如果之前没 clone）
+git clone git@github.com:shakamilo1/sylphos.git
 cd sylphos
 ```
 
-### 3) 创建虚拟环境
-```bash
-py -3.11 -m venv .venv
-```
+---
 
-### 4) 激活虚拟环境（PowerShell）
+## 2️⃣ 获取 PR 分支
+
+假设 PR #5 的分支名叫 `feature/requirements-fix`（实际以 PR 页面显示为准）：
+
 ```powershell
-.\.venv\Scripts\Activate.ps1
+# 先 fetch PR
+git fetch origin pull/5/head:feature/requirements-fix
+
+# 切换到该分支
+git checkout feature/requirements-fix
 ```
 
+> ⚠️ 如果你已经在本地有这个分支，先 `git pull` 更新。
+
+---
+
+## 3️⃣ 建立虚拟环境
+
+```powershell
+# Windows PowerShell
+python -m venv .venv
+
+# 激活虚拟环境
+.venv\Scripts\Activate.ps1
+```
 如果你用的是 CMD：
 ```bat
 .\.venv\Scripts\activate.bat
 ```
+---
 
-### 5) 安装依赖
-```bash
-python -m pip install --upgrade pip
+## 4️⃣ 安装依赖
+
+```powershell
+# 安装当前 PR 的 requirements.txt
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-说明：当前 `requirements.txt` 已是 **UTF-8（无 BOM）**，可直接用于 `pip install -r requirements.txt`。
+> 如果你还没把 requirements.txt 修成 UTF-8 without BOM，这里可能会报错，这时候需要先按上一步的方式重建。
+
+---
+
+## 5️⃣ 测试环境和功能
+
+### 5.1 语法/模块检查
+
+```powershell
+python -m compileall scripts voice sylphos config
+```
+
+### 5.2 测试 CLI
+
+```powershell
+# 查看帮助
+python -m scripts.test_wakeword_pipeline --help
+
+# 显示配置
+python -m scripts.test_wakeword_pipeline show-config
+
+# 自检（如果有模型和音频设备）
+python -m scripts.test_wakeword_pipeline check-config
+python -m scripts.test_wakeword_pipeline list-models
+```
+
+未找到模型。可运行 
+```powershell
+python download.py
+```
+下载。
+> ⚠️ 如果环境里没有 openwakeword 模型或音频设备，自检/录音测试可能无法完全跑，但至少可以验证配置和 CLI 正常。
+
+### 5.3 录音/唤醒测试（可选）
+
+```powershell
+# 定时录音 3 秒
+python -m scripts.test_wakeword_pipeline test-timed-record --duration 3
+
+# VAD 录音 12 秒
+python -m scripts.test_wakeword_pipeline test-vad-record --duration 12
+
+# 全链路测试 20 秒
+python -m scripts.test_wakeword_pipeline test-full-pipeline --duration 20
+```
+
+---
+
+## 6️⃣ 确认文件编码
+
+确保 `requirements.txt` 是 UTF-8 without BOM：
+
+```powershell
+# PowerShell
+$bytes = [System.IO.File]::ReadAllBytes("requirements.txt")
+$bytes[0..2]   # 不应该是 239,187,191
+$bytes -contains 0  # False 表示没有空字节
+```
+
+---
+
+## 7️⃣ 测试完成后
+
+确认一切正常，就可以在本地直接提交或 push PR 更新：
+
+```powershell
+git add requirements.txt readme.txt
+git commit -m "Verify requirements and readme locally"
+git push origin feature/requirements-fix
+```
 
 ### 6) 依赖分层说明（主链路 / 旧脚本）
 主链路直接依赖（已写入 requirements.txt）：
