@@ -25,7 +25,7 @@ class WakeWordDetected(RuntimeEvent):
     score: float = 0.0
 
     def __init__(self, name: str, score: float) -> None:
-        super().__init__(
+        super(WakeWordDetected, self).__init__(
             event_type="wakeword.detected",
             payload={"name": name, "score": score},
         )
@@ -46,7 +46,7 @@ class RecordingRequested(RuntimeEvent):
 
     def __init__(self, duration_seconds: float) -> None:
         mode = "timed" if duration_seconds > 0 else "vad"
-        super().__init__(
+        super(RecordingRequested, self).__init__(
             event_type="recording.requested",
             payload={"duration_seconds": duration_seconds, "mode": mode},
         )
@@ -62,7 +62,7 @@ class RecordingCompleted(RuntimeEvent):
     sample_rate: int = 0
 
     def __init__(self, wav_path: str | None, sample_rate: int) -> None:
-        super().__init__(
+        super(RecordingCompleted, self).__init__(
             event_type="recording.completed",
             payload={"wav_path": wav_path, "sample_rate": sample_rate},
         )
