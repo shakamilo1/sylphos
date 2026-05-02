@@ -137,29 +137,6 @@ python -m scripts.test_wakeword_pipeline test-full-pipeline --duration 20
 
 ---
 
-## 6️⃣ 确认文件编码
-
-确保 `requirements.txt` 是 UTF-8 without BOM：
-
-```powershell
-# PowerShell
-$bytes = [System.IO.File]::ReadAllBytes("requirements.txt")
-$bytes[0..2]   # 不应该是 239,187,191
-$bytes -contains 0  # False 表示没有空字节
-```
-
----
-
-## 7️⃣ 测试完成后
-
-确认一切正常，就可以在本地直接提交或 push PR 更新：
-
-```powershell
-git add requirements.txt readme.txt
-git commit -m "Verify requirements and readme locally"
-git push origin feature/requirements-fix
-```
-
 ### 6) 依赖分层说明（主链路 / 旧脚本）
 主链路直接依赖（已写入 requirements.txt）：
 - `openwakeword`、`onnxruntime`
