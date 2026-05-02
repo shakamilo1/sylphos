@@ -28,8 +28,14 @@ def find_project_root(explicit_root: str | None = None) -> Path:
 
 
 def check_imports() -> tuple[bool, list[str]]:
+    """检查 SenseVoice 运行依赖。
+
+    说明：将 C++ 扩展依赖 editdistance 替换为纯 Python 的 textdistance，
+    以避免 Python 3.13 + Windows 下的本地编译失败。
+    """
     errors: list[str] = []
-    for module_name in ("funasr", "torch", "modelscope"):
+    # editdistance -> textdistance：保持 STT/Runtime 行为不变，仅替换依赖实现。
+    for module_name in ("funasr", "torch", "modelscope", "textdistance"):
         try:
             __import__(module_name)
         except Exception:
