@@ -1,0 +1,7 @@
+# Sylphos TTS optional dependencies for Python 3.12.
+# CosyVoice itself is usually installed from source; see docs/tts_cosyvoice.md.
+torch
+torchaudio
+modelscope
+numpy
+soundfile

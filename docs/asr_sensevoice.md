@@ -3,12 +3,12 @@
 本文说明 SenseVoice STT 在 Sylphos 中的独立验证与 Runtime 事件总线集成方式。
 
 ## 1) 安装环境（Windows + PowerShell）
-项目正式 Python 版本为 **Python 3.13**。
+项目正式 Python 版本为 **Python 3.12**。
 
 ```powershell
 # 创建独立 venv
 cd H:\sylphos
-py -3.13 -m venv .venv-asr
+py -3.12 -m venv .venv-asr
 .\.venv-asr\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
 pip install -r .\requirements-asr.txt
@@ -16,7 +16,7 @@ pip install -r .\requirements-asr.txt
 
 
 > 依赖说明：`requirements-asr.txt` 已将 `editdistance` 替换为纯 Python 库 `textdistance`。
-> 在 **Python 3.13 + Windows** 环境下可直接安装，无需编译 `editdistance` 的 C++ 扩展（该扩展在该环境下可能编译失败）。
+> 在 **Python 3.12 + Windows** 环境下可直接安装，无需编译 `editdistance` 的 C++ 扩展（该扩展在该环境下可能编译失败）。
 > 文档中的安装与健康检查命令保持不变。
 
 ## 2) 模型下载与预热

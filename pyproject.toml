@@ -1,0 +1,6 @@
+[project]
+name = "sylphos"
+version = "0.1.0"
+description = "Sylphos voice runtime modules"
+requires-python = ">=3.12"
+readme = "readme.txt"

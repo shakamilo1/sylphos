@@ -1,32 +1,35 @@
 Sylphos 当前版本使用说明（语音链路）
 ====================================
 
-> 本文档只描述当前仓库已经实现并可直接使用的能力，不讨论未来规划。
+> 本文档只描述当前仓库已经实现并可直接使用的能力。项目最低 Python 版本为 **Python 3.12**。
 
 一、项目简介
 -----------
-当前仓库已实现一条可运行的 wakeword + 录音链路，核心能力包括：
+当前仓库已实现模块化语音运行时，核心能力包括：
 1) 麦克风音频采集与分发（AudioHub）
 2) OpenWakeWord 唤醒词检测
 3) 录音（固定时长模式 + VAD 自动结束模式）
-4) 统一配置向导（生成本地配置）
-5) 统一测试入口（设备/模型/配置/录音/唤醒/全链路）
+4) SenseVoice / FunASR STT（独立健康检查 + Runtime EventBus）
+5) CosyVoice TTS（独立健康检查 + Runtime EventBus）
+6) 统一配置向导与 wakeword/recorder 测试入口
 
 二、语音链路相关目录与脚本
 ------------------------
 - `config/voice.py`：默认配置
 - `config/local_config.py`：本地覆盖配置（由向导生成）
-
 - `scripts/setup_wakeword.py`：配置向导
 - `scripts/test_wakeword_pipeline.py`：统一测试 CLI
 - `scripts/run_wakeword_pipeline.py`：正式运行入口
 - `scripts/runtime_bootstrap.py`：运行链路装配逻辑（供 run/test 复用）
-
 - `voice/audio/hub.py`：音频输入与广播
 - `voice/audio/recorder.py`：录音服务（定时 + VAD）
 - `voice/wakeword/openwakeword_engine.py`：OpenWakeWord 适配
+- `sylphos/voice/stt/`：SenseVoice / FunASR STT 模块
+- `sylphos/voice/tts/`：CosyVoice TTS 模块
+- `sylphos/runtime/events.py`：Runtime 事件定义
+- `sylphos/runtime/stt_handler.py`：`recording.completed -> asr.completed`
+- `sylphos/runtime/tts_handler.py`：`tts.requested -> tts.completed`
 - `sylphos/runtime/orchestrator.py`：事件编排
-
 - `download.py`：下载 openwakeword 模型
 
 旧脚本（仍保留，主要用于历史/单点调试）：
@@ -36,263 +39,128 @@ Sylphos 当前版本使用说明（语音链路）
 
 三、从零开始安装（Windows + 项目内 .venv）
 ----------------------------------------
-可以，操作上就是标准流程，把 GitHub 上最新的 PR 拉到本地，然后在你的 Windows + `.venv` 环境里跑测试。步骤如下：
-
----
-
-## 1️⃣ 拉取仓库
-
 ```powershell
-# 先 clone 仓库（如果之前没 clone）
 git clone git@github.com:shakamilo1/sylphos.git
 cd sylphos
-```
-
----
-
-## 2️⃣ 获取 PR 分支
-
-假设 PR #5 的分支名叫 `feature/requirements-fix`（实际以 PR 页面显示为准）：
-
-```powershell
-# 先 fetch PR
-git fetch origin pull/5/head:feature/requirements-fix
-
-# 切换到该分支
-git checkout feature/requirements-fix
-```
-
-> ⚠️ 如果你已经在本地有这个分支，先 `git pull` 更新。
-
----
-
-## 3️⃣ 建立虚拟环境
-
-```powershell
-# Windows PowerShell
-python -m venv .venv
-
-# 激活虚拟环境
-.venv\Scripts\Activate.ps1
-```
-如果你用的是 CMD：
-```bat
-.\.venv\Scripts\activate.bat
-```
----
-
-## 4️⃣ 安装依赖
-
-```powershell
-# 安装当前 PR 的 requirements.txt
-pip install --upgrade pip
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-> 如果你还没把 requirements.txt 修成 UTF-8 without BOM，这里可能会报错，这时候需要先按上一步的方式重建。
-
----
-
-## 5️⃣ 测试环境和功能
-
-### 5.1 语法/模块检查
-
+四、基础测试
+-----------
 ```powershell
 python -m compileall scripts voice sylphos config
-```
-
-### 5.2 测试 CLI
-
-```powershell
-# 查看帮助
 python -m scripts.test_wakeword_pipeline --help
-
-# 显示配置
 python -m scripts.test_wakeword_pipeline show-config
-
-# 自检（如果有模型和音频设备）
 python -m scripts.test_wakeword_pipeline check-config
 python -m scripts.test_wakeword_pipeline list-models
 ```
 
-未找到模型。可运行 
+未找到 wakeword 模型时可运行：
 ```powershell
 python download.py
 ```
-下载。
-> ⚠️ 如果环境里没有 openwakeword 模型或音频设备，自检/录音测试可能无法完全跑，但至少可以验证配置和 CLI 正常。
 
-### 5.3 录音/唤醒测试（可选）
-
+五、录音/唤醒测试（可选）
+----------------------
 ```powershell
-# 定时录音 3 秒
 python -m scripts.test_wakeword_pipeline test-timed-record --duration 3
-
-# VAD 录音 12 秒
 python -m scripts.test_wakeword_pipeline test-vad-record --duration 12
-
-# 全链路测试 20 秒
 python -m scripts.test_wakeword_pipeline test-full-pipeline --duration 20
 ```
 
----
+六、SenseVoice / FunASR STT
+--------------------------
+STT 是正式模块，但依赖不并入主 `requirements.txt`。在 Python 3.12 环境中安装：
+```powershell
+pip install -r .\requirements-asr.txt
+```
 
-### 6) 依赖分层说明（主链路 / 旧脚本）
-主链路直接依赖（已写入 requirements.txt）：
+下载/初始化模型：
+```powershell
+python -m sylphos.voice.stt.healthcheck --download-only --device cpu
+```
+
+识别最新录音：
+```powershell
+python -m sylphos.voice.stt.healthcheck --latest --device cpu --language zh
+```
+
+Runtime 模拟 `RecordingCompleted -> ASRCompleted`：
+```powershell
+python -m sylphos.voice.stt.healthcheck --latest --device cpu --runtime --json
+```
+
+详细说明见 `docs/asr_sensevoice.md`。
+
+七、CosyVoice TTS
+----------------
+TTS 是正式模块，但依赖不并入主 `requirements.txt`。在 Python 3.12 环境中安装：
+```powershell
+pip install -r .\requirements-tts.txt
+```
+
+如果仍提示缺少 `cosyvoice`，请按 CosyVoice 官方仓库在当前 Python 3.12 虚拟环境中从源码安装 CosyVoice。
+
+下载/初始化模型：
+```powershell
+python -m sylphos.voice.tts.healthcheck --download-only --device cpu
+```
+
+合成 wav：
+```powershell
+python -m sylphos.voice.tts.healthcheck --text "你好，我是 Sylphos。" --output .\outputs\tts\latest_tts.wav --device cpu
+```
+
+JSON 输出：
+```powershell
+python -m sylphos.voice.tts.healthcheck --text "你好。" --json
+```
+
+Runtime 模拟 `TTSRequested -> TTSCompleted`：
+```powershell
+python -m sylphos.voice.tts.healthcheck --text "你好。" --runtime --json
+```
+
+详细说明见 `docs/tts_cosyvoice.md`。
+
+八、依赖分层说明
+--------------
+主链路直接依赖（已写入 `requirements.txt`）：
 - `openwakeword`、`onnxruntime`
 - `numpy`
 - `sounddevice`
 - `silero-vad`
-- `scipy`（重采样回退路径，保证无需额外本地编译也可运行）
+- `scipy`（重采样回退路径）
 
-可选依赖（默认不放入 requirements.txt）：
-- `samplerate`：重采样性能优化项；未安装时代码会自动回退到 `scipy`。
-- `soundfile`：仅旧脚本 `voice/VAD/test_silero_vad.py` 直接使用。
-- `pyaudio`：仅旧示例 `detect_from_microphone.py` 使用。
+可选依赖：
+- STT：`requirements-asr.txt`
+- TTS：`requirements-tts.txt`
+- `samplerate`：重采样性能优化项；未安装时代码会自动回退到 `scipy`
+- `soundfile`：旧脚本 `voice/VAD/test_silero_vad.py` 使用
+- `pyaudio`：旧示例 `detect_from_microphone.py` 使用
 
-四、模型下载与模型放置
---------------------
-### 1) 下载内置模型
-```bash
-python download.py
-```
+九、模型与输出文件
+----------------
+- Wakeword 模型可通过 `python download.py` 下载。
+- 自定义 wakeword 模型建议放在 `models/wakeword/`。
+- TTS 模型建议放在 `models/tts/` 或使用 CosyVoice/ModelScope 默认缓存。
+- 录音输出在 `recordings/` 下。
+- TTS 输出在 `outputs/tts/` 下。
+- 模型文件、缓存目录、输出音频不要提交 Git。
 
-该脚本会调用 openwakeword 的下载函数，模型会下载到 openwakeword 包目录，例如：
-- `.../site-packages/openwakeword/resources/models`
-
-### 2) project_relative 模式放置方式
-当 `WAKEWORD_MODEL_SOURCE = "project_relative"` 时，
-`WAKEWORD_MODEL_RELATIVE_PATH` 统一按“项目根目录”解析。
-
-例如配置：
-- `WAKEWORD_MODEL_RELATIVE_PATH = "models/wakeword/your_model.onnx"`
-
-实际路径应为：
-- `<项目根目录>/models/wakeword/your_model.onnx`
-
-五、配置覆盖关系（非常重要）
------------------------
+十、配置覆盖关系
+--------------
 配置加载顺序：
 1) 先加载 `config/voice.py` 默认值
 2) 若存在 `config/local_config.py`，同名配置覆盖默认值
 
-结论：
-- `voice.py`：默认配置模板
-- `local_config.py`：当前机器最终生效配置
-
-六、运行配置向导
--------------
-```bash
+十一、运行配置向导
+----------------
+```powershell
 python -m scripts.setup_wakeword
 ```
 
-向导会覆盖/写入 `config/local_config.py`，主要包含：
-- 输入设备、采样率、声道、blocksize、dtype
-- wakeword 模型来源与模型文件
-- 唤醒阈值、冷却时间
-- 录音保存目录/保存模式
-- 定时录音参数
-- VAD 开关与各项参数
-
-提示：若你设置 `COMMAND_RECORD_SECONDS <= 0` 且 `VAD_ENABLED=False`，向导会阻止写入并提示修正。
-
-七、统一测试 CLI
---------------
-统一入口：
-```bash
-python -m scripts.test_wakeword_pipeline --help
-```
-
-### 常用命令（建议按顺序）
-1) 打印当前配置
-```bash
-python -m scripts.test_wakeword_pipeline show-config
-```
-
-2) 配置自检
-```bash
-python -m scripts.test_wakeword_pipeline check-config
-```
-
-3) 查看设备
-```bash
-python -m scripts.test_wakeword_pipeline list-devices
-```
-
-4) 查看模型
-```bash
-python -m scripts.test_wakeword_pipeline list-models
-```
-
-5) 定时录音测试
-```bash
-python -m scripts.test_wakeword_pipeline test-timed-record --duration 3
-```
-
-6) VAD 录音测试
-```bash
-python -m scripts.test_wakeword_pipeline test-vad-record --duration 12
-```
-
-7) 全链路测试
-```bash
-python -m scripts.test_wakeword_pipeline test-full-pipeline --duration 20
-```
-
-### 每个子命令用途
-- `list-devices`：列出可用输入设备
-- `list-models`：列出 openwakeword 内置模型；若当前配置是 `project_relative`，会额外打印解析后的配置路径
-- `show-config`：显示当前生效配置值
-- `check-config`：检查关键配置与模型路径是否可用
-- `test-timed-record`：仅测试固定时长录音
-- `test-vad-record`：仅测试 VAD 录音
-- `test-wakeword-listen`：仅测试唤醒监听
-- `test-full-pipeline`：测试唤醒->录音完整链路
-
-八、正式运行
------------
-```bash
-python -m scripts.run_wakeword_pipeline
-```
-
-当前行为：
-1) 持续监听 wakeword
-2) 命中后暂停 wakeword
-3) 触发一次录音（定时或 VAD）
-4) 录音完成后不会自动恢复唤醒
-5) 终端输入 `r` + 回车可手动恢复监听
-
-九、定时录音与 VAD 录音切换
-------------------------
-在配置中通过 `COMMAND_RECORD_SECONDS` 控制：
-- `> 0`：固定时长录音
-- `<= 0`：进入 VAD 模式（此时 `VAD_ENABLED` 必须为 `True`）
-
-十、常见问题排查
---------------
-1) `ModuleNotFoundError`（如 sounddevice/openwakeword）
-- 确认已激活 `.venv`
-- 重新执行 `pip install -r requirements.txt`
-
-2) `check-config` 报模型不存在
-- 先执行 `python download.py`
-- 若是 `project_relative`，检查路径是否相对项目根目录
-
-3) 唤醒不稳定
-- 适当降低 `WAKEWORD_THRESHOLD`
-- 检查输入设备是否选择正确
-- 检查系统麦克风权限
-
-4) VAD 迟迟不结束
-- 适当提高 `VAD_THRESHOLD`
-- 适当降低 `VAD_END_SILENCE_MS`
-
-5) 录音没保存
-- 检查 `RECORD_SAVE_MODE` 是否为 `off`
-- 检查 `RECORDINGS_DIR` 是否可写
-
-十一、当前仍需手动处理/已知行为
-----------------------------
-1) 全链路中录音完成后默认不自动恢复唤醒，需要手动输入 `r` 恢复。
-2) 旧测试脚本仍保留，但建议优先使用统一测试 CLI（`scripts/test_wakeword_pipeline.py`）。
-
+向导会覆盖/写入 `config/local_config.py`，主要包含输入设备、采样率、声道、blocksize、dtype、wakeword 模型来源、阈值、冷却时间、录音目录、定时录音参数和 VAD 配置。
