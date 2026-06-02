@@ -114,6 +114,8 @@ class TTSRequested(RuntimeEvent):
     output_path: str | None = None
     voice: str | None = None
     speaker: str | None = None
+    prompt_wav: str | None = None
+    prompt_text: str | None = None
 
     def __init__(
         self,
@@ -122,6 +124,8 @@ class TTSRequested(RuntimeEvent):
         output_path: str | None,
         voice: str | None = None,
         speaker: str | None = None,
+        prompt_wav: str | None = None,
+        prompt_text: str | None = None,
     ) -> None:
         super(TTSRequested, self).__init__(
             event_type="tts.requested",
@@ -130,12 +134,16 @@ class TTSRequested(RuntimeEvent):
                 "output_path": output_path,
                 "voice": voice,
                 "speaker": speaker,
+                "prompt_wav": prompt_wav,
+                "prompt_text": prompt_text,
             },
         )
         self.text = text
         self.output_path = output_path
         self.voice = voice
         self.speaker = speaker
+        self.prompt_wav = prompt_wav
+        self.prompt_text = prompt_text
 
 
 @dataclass(slots=True)

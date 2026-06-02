@@ -48,7 +48,13 @@ def check_imports() -> tuple[bool, list[str]]:
         try:
             __import__(module_name)
         except Exception:
-            errors.append(f"依赖缺失: {module_name}。请运行: pip install -r requirements-tts.txt")
+            if module_name == "cosyvoice":
+                errors.append(
+                    "依赖缺失: cosyvoice。requirements-tts.txt 不包含 CosyVoice 本体，"
+                    "请按 docs/tts_cosyvoice.md 从 CosyVoice 官方仓库源码安装。"
+                )
+            else:
+                errors.append(f"依赖缺失: {module_name}。请运行: pip install -r requirements-tts.txt")
     return (not errors), errors
 
 
@@ -139,6 +145,8 @@ def main() -> None:
                     output_path=str(output_path),
                     voice=args.speaker,
                     speaker=args.speaker,
+                    prompt_wav=args.prompt_wav,
+                    prompt_text=args.prompt_text,
                 )
             )
             handler.stop()

@@ -48,6 +48,8 @@ class TTSHandler:
             output_path: Required/optional WAV path.  Missing values fall back
                 to ``outputs/tts/latest_tts.wav``.
             voice/speaker: Optional speaker hints passed through to CosyVoice.
+            prompt_wav/prompt_text: Optional zero-shot prompt inputs passed
+                through unchanged for CosyVoice zero-shot synthesis.
         """
         text = str(event.payload.get("text") or "").strip()
         if not text:
@@ -56,6 +58,8 @@ class TTSHandler:
 
         output_path = event.payload.get("output_path") or "outputs/tts/latest_tts.wav"
         speaker = event.payload.get("speaker") or event.payload.get("voice")
+        prompt_wav = event.payload.get("prompt_wav")
+        prompt_text = event.payload.get("prompt_text")
 
         engine = None
         try:
@@ -66,6 +70,8 @@ class TTSHandler:
                 Path(output_path),
                 speaker=speaker,
                 voice=event.payload.get("voice"),
+                prompt_wav=prompt_wav,
+                prompt_text=prompt_text,
             )
 
             # 关键节点：发布统一完成事件，下游播放器/UI 只消费 audio_path/sample_rate。

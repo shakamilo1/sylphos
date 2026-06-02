@@ -20,7 +20,8 @@ from .base import TTSResult
 
 _INSTALL_HINT = (
     "缺少 TTS / CosyVoice 依赖。请先运行：pip install -r requirements-tts.txt。"
-    "如果 CosyVoice 未发布到 PyPI，请按 docs/tts_cosyvoice.md 从源码安装 CosyVoice。"
+    "注意 requirements-tts.txt 不包含 CosyVoice 本体；"
+    "请按 docs/tts_cosyvoice.md 从 CosyVoice 官方仓库源码安装。"
 )
 _MODEL_LOAD_HINT = (
     "CosyVoice 模型加载失败。可能原因：\n"

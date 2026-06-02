@@ -97,12 +97,12 @@ python -m sylphos.voice.stt.healthcheck --latest --device cpu --runtime --json
 
 七、CosyVoice TTS
 ----------------
-TTS 是正式模块，但依赖不并入主 `requirements.txt`。在 Python 3.12 环境中安装：
+TTS 是正式模块，但依赖不并入主 `requirements.txt`。`requirements-tts.txt` 只包含 Sylphos TTS 基础依赖，不包含 CosyVoice 本体。在 Python 3.12 环境中安装：
 ```powershell
 pip install -r .\requirements-tts.txt
 ```
 
-如果仍提示缺少 `cosyvoice`，请按 CosyVoice 官方仓库在当前 Python 3.12 虚拟环境中从源码安装 CosyVoice。
+请按 CosyVoice 官方仓库在当前 Python 3.12 虚拟环境中从源码安装 CosyVoice；否则 healthcheck 会提示缺少 `cosyvoice`。
 
 下载/初始化模型：
 ```powershell
