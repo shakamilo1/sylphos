@@ -4,7 +4,7 @@ import sys
 __all__ = ["__version__"]
 __version__ = "0.1.0"
 
-_MIN_VERSION = (3, 13)
+_MIN_VERSION = (3, 12)
 
 if sys.version_info < _MIN_VERSION:
     v = ".".join(map(str, _MIN_VERSION))

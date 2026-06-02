@@ -106,6 +106,78 @@ class ASRCompleted(RuntimeEvent):
         self.metadata = metadata or {}
 
 
+@dataclass(slots=True)
+class TTSRequested(RuntimeEvent):
+    """语音合成请求事件（由 LLM / Orchestrator 等上游发布）。"""
+
+    text: str = ""
+    output_path: str | None = None
+    voice: str | None = None
+    speaker: str | None = None
+    prompt_wav: str | None = None
+    prompt_text: str | None = None
+
+    def __init__(
+        self,
+        *,
+        text: str,
+        output_path: str | None,
+        voice: str | None = None,
+        speaker: str | None = None,
+        prompt_wav: str | None = None,
+        prompt_text: str | None = None,
+    ) -> None:
+        super(TTSRequested, self).__init__(
+            event_type="tts.requested",
+            payload={
+                "text": text,
+                "output_path": output_path,
+                "voice": voice,
+                "speaker": speaker,
+                "prompt_wav": prompt_wav,
+                "prompt_text": prompt_text,
+            },
+        )
+        self.text = text
+        self.output_path = output_path
+        self.voice = voice
+        self.speaker = speaker
+        self.prompt_wav = prompt_wav
+        self.prompt_text = prompt_text
+
+
+@dataclass(slots=True)
+class TTSCompleted(RuntimeEvent):
+    """语音合成完成事件（由 TTSHandler 发布）。"""
+
+    text: str = ""
+    audio_path: str | None = None
+    sample_rate: int | None = None
+    metadata: dict | None = None
+
+    def __init__(
+        self,
+        *,
+        text: str,
+        audio_path: str | None,
+        sample_rate: int | None,
+        metadata: dict | None,
+    ) -> None:
+        super(TTSCompleted, self).__init__(
+            event_type="tts.completed",
+            payload={
+                "text": text,
+                "audio_path": audio_path,
+                "sample_rate": sample_rate,
+                "metadata": metadata or {},
+            },
+        )
+        self.text = text
+        self.audio_path = audio_path
+        self.sample_rate = sample_rate
+        self.metadata = metadata or {}
+
+
 EventHandler = Callable[[RuntimeEvent], None]
 
 

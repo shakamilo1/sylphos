@@ -46,3 +46,8 @@ wheelhouse/
 recordings/*.wav
 recordings/*.mp3
 recordings/*.flac
+
+# TTS outputs and model caches
+outputs/tts/*.wav
+outputs/tts/*.mp3
+models/tts/

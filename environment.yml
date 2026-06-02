@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   # ---- 基础 ----
-  - python=3.11
+  - python=3.12
   - fastapi
   - uvicorn
   - pydantic
@@ -21,9 +21,7 @@ dependencies:
   - espeak-ng
 
   # ---- TTS（可选）----
-  # piper 主要以独立二进制方式使用，conda 中无官方包
-  # 若未来需要高质量 TTS，可通过 pip 安装 coqui-tts
-  # - coqui-tts
+  # 正式 TTS 模块使用 CosyVoice，建议在 Python 3.12 环境中按 docs/tts_cosyvoice.md 单独安装 requirements-tts.txt。
 
   # ---- 工具与开发 ----
   - pip
@@ -39,6 +37,4 @@ dependencies:
       - openwakeword
       - modelcontextprotocol
       # TTS
-      - edge-tts
-      # 可选增强
-      - coqui-tts
+      # CosyVoice 依赖不放入主环境，按需执行: pip install -r requirements-tts.txt
