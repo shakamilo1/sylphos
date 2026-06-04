@@ -1,0 +1,16 @@
+# Optional local Sylphos settings template.
+#
+# This file is a template only. The current OpenClaw client reads environment variables
+# and sylphos/config/settings.py defaults; it does not automatically import local_config.py.
+#
+# Prefer environment variables for secrets. Do not copy real tokens into files
+# committed to git. If you create sylphos/config/local_config.py locally, keep it
+# private and out of version control.
+
+OPENCLAW_BASE_URL = "http://127.0.0.1:18789"
+OPENCLAW_TOKEN = ""
+OPENCLAW_MODEL = "openclaw"
+OPENCLAW_SESSION_KEY = "sylphos-main"
+OPENCLAW_MESSAGE_CHANNEL = "sylphos-voice"
+OPENCLAW_TIMEOUT_SECONDS = 120
+OPENCLAW_MAX_SPOKEN_CHARS = 300
