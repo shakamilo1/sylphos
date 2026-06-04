@@ -29,7 +29,7 @@ class OpenClawTimeoutError(OpenClawError):
     """OpenClaw request exceeded the configured timeout."""
 
 
-_CODE_FENCE_RE = re.compile(r"```(?:[^\n`]*)?\n?|```", re.MULTILINE)
+_FENCED_CODE_BLOCK_RE = re.compile(r"```[^\n`]*\n.*?```|```.*?```", re.DOTALL)
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _MARKDOWN_MARK_RE = re.compile(r"(?<!\w)([*_~`]{1,3})(?!\w)")
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
@@ -49,7 +49,7 @@ class SpeechReplyAdapter:
 
     def adapt(self, raw_text: str) -> str:
         text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
-        text = _CODE_FENCE_RE.sub("", text)
+        text = _FENCED_CODE_BLOCK_RE.sub("这里有一段代码，已保留在日志里。", text)
         text = _MARKDOWN_LINK_RE.sub(r"\1", text)
         text = _HEADING_RE.sub("", text)
         text = _LIST_MARK_RE.sub("", text)

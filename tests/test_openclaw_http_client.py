@@ -168,6 +168,8 @@ def test_spoken_text_cleans_markdown():
     spoken = adapter.adapt(raw)
 
     assert "```" not in spoken
+    assert "print" not in spoken
+    assert "这里有一段代码，已保留在日志里。" in spoken
     assert "**" not in spoken
     assert "[" not in spoken
     assert "标题" in spoken

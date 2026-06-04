@@ -58,5 +58,6 @@ models/tts/
 !.env.example
 local_config.py
 sylphos/config/local_config.py
-*token*
 *.token
+*.secret
+secrets/

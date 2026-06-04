@@ -161,6 +161,8 @@ class OpenClawHTTPClient(BaseAgentClient):
             "usage": response_payload.get("usage"),
             "run_id": response_payload.get("run_id") or response_payload.get("id"),
             "model": response_payload.get("model") or self.settings.model,
+            # Keep for UI/debugging only. Do not write raw_response to logs by default:
+            # it may contain tool output, local paths, or sensitive content.
             "raw_response": response_payload,
         }
         return raw_text, metadata
