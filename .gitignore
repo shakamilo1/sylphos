@@ -51,3 +51,13 @@ recordings/*.flac
 outputs/tts/*.wav
 outputs/tts/*.mp3
 models/tts/
+
+# Local secrets / environment overrides
+.env
+.env.*
+!.env.example
+local_config.py
+sylphos/config/local_config.py
+*.token
+*.secret
+secrets/
