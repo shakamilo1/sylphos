@@ -54,7 +54,10 @@ Windows Sylphos 保存并播放 WAV 文件
             ├── Fun-CosyVoice3-0.5B                 # 原始模型目录
             ├── Fun-CosyVoice3-0.5B-base            # Base 模型目录
             ├── Fun-CosyVoice3-0.5B-rl              # RL 模型目录
-            └── CosyVoice-ttsfrd                    # ttsfrd 前端资源
+            ├── CosyVoice-ttsfrd                    # ttsfrd 前端资源
+            ├── base -> Fun-CosyVoice3-0.5B-base    # Base 软链接
+            ├── rl -> Fun-CosyVoice3-0.5B-rl        # RL 软链接
+            └── current -> base                     # 当前默认模型软链接
 ```
 
 > 说明：路径可以根据实际机器调整，但建议将模型和服务文件集中放在 `~/sylphos_services/cosyvoice3`，便于管理、备份和排查问题。
@@ -137,7 +140,20 @@ git lfs install
 
 ### 3.1 安装 Conda
 
-如果 WSL2 中尚未安装 Conda，可安装 Miniconda 或 Anaconda。安装完成后，重新打开终端或执行 Conda 初始化脚本，使 `conda` 命令可用。
+如果 WSL2 中尚未安装 Conda，可安装 Miniconda 或 Anaconda。以下以 Miniconda 为例：
+
+```bash
+cd ~
+curl -fsSLO https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+```
+
+安装过程中按提示确认安装路径。安装完成后，重新打开 WSL2 终端，或执行以下命令加载 Conda：
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda init bash
+```
 
 检查 Conda 是否安装成功：
 
@@ -351,12 +367,59 @@ cp llm.rl.pt llm.pt
 
 切换后，`Fun-CosyVoice3-0.5B-rl` 目录中的 `llm.pt` 即为 RL 权重。
 
-### 7.3 最终模型目录检查
+### 7.3 创建稳定软链接
 
-检查模型目录：
+为了让 FastAPI 服务配置更稳定，建议不要在服务代码中直接写死完整模型目录名，而是在 `pretrained_models` 下创建固定软链接。这样后续替换模型版本时，只需要调整软链接，不需要修改服务配置。
+
+进入模型根目录：
 
 ```bash
-find ~/sylphos_services/cosyvoice3/pretrained_models -maxdepth 2 -type f \( -name "llm.pt" -o -name "llm.rl.pt" -o -name "llm.base.pt" \)
+cd ~/sylphos_services/cosyvoice3/pretrained_models
+```
+
+创建 Base 与 RL 软链接：
+
+```bash
+ln -sfn Fun-CosyVoice3-0.5B-base base
+ln -sfn Fun-CosyVoice3-0.5B-rl rl
+```
+
+创建默认模型软链接。默认使用 Base 模型时执行：
+
+```bash
+ln -sfn base current
+```
+
+如果需要将默认模型切换为 RL 模型，可执行：
+
+```bash
+ln -sfn rl current
+```
+
+软链接完成后，推荐服务端使用以下稳定路径：
+
+```text
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/base
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/rl
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/current
+```
+
+其中：
+
+| 软链接 | 指向 | 用途 |
+| --- | --- | --- |
+| `base` | `Fun-CosyVoice3-0.5B-base` | 固定 Base 模型入口 |
+| `rl` | `Fun-CosyVoice3-0.5B-rl` | 固定 RL 模型入口 |
+| `current` | `base` 或 `rl` | 默认模型入口，便于快速切换 |
+
+### 7.4 最终模型目录检查
+
+检查模型目录和软链接：
+
+```bash
+find ~/sylphos_services/cosyvoice3/pretrained_models -maxdepth 2 \
+  \( -type f \( -name "llm.pt" -o -name "llm.rl.pt" -o -name "llm.base.pt" \) -o -type l \) \
+  -print
 ```
 
 期望至少看到类似文件：
@@ -367,6 +430,9 @@ find ~/sylphos_services/cosyvoice3/pretrained_models -maxdepth 2 -type f \( -nam
 /home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-base/llm.pt
 /home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-rl/llm.base.pt
 /home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-rl/llm.pt
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/base
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/rl
+/home/<user>/sylphos_services/cosyvoice3/pretrained_models/current
 ```
 
 ---
@@ -449,8 +515,9 @@ cd ~/sylphos_services/cosyvoice3
    - `text`：需要合成的文本。
    - `model_version`：模型版本，取值为 `base` 或 `rl`。
 4. 根据 `model_version` 选择模型目录：
-   - `base` 对应 `Fun-CosyVoice3-0.5B-base`。
-   - `rl` 对应 `Fun-CosyVoice3-0.5B-rl`。
+   - `base` 对应软链接 `pretrained_models/base`。
+   - `rl` 对应软链接 `pretrained_models/rl`。
+   - 未指定模型版本时，可使用软链接 `pretrained_models/current` 作为默认入口。
 5. 调用 CosyVoice3 生成 WAV 音频。
 6. 返回 WAV 二进制数据、WAV 文件路径，或包含音频信息的 JSON。
 7. 在异常时返回明确错误信息，便于 Windows Sylphos 端提示用户。
@@ -463,8 +530,9 @@ cd ~/sylphos_services/cosyvoice3
 COSYVOICE_REPO=/home/<user>/CosyVoice
 SERVICE_ROOT=/home/<user>/sylphos_services/cosyvoice3
 MODEL_ROOT=/home/<user>/sylphos_services/cosyvoice3/pretrained_models
-BASE_MODEL_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-base
-RL_MODEL_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-rl
+BASE_MODEL_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/base
+RL_MODEL_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/rl
+DEFAULT_MODEL_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/current
 TTSFRD_DIR=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/CosyVoice-ttsfrd
 OUTPUT_DIR=/home/<user>/sylphos_services/cosyvoice3/outputs
 ```
@@ -762,6 +830,7 @@ http://172.xx.xx.xx:9880/health
 - [ ] 已下载 `CosyVoice-ttsfrd` 资源。
 - [ ] 已创建 `Fun-CosyVoice3-0.5B-base` 目录。
 - [ ] 已创建并切换 `Fun-CosyVoice3-0.5B-rl` 目录。
+- [ ] 已创建 `base`、`rl`、`current` 三个稳定软链接。
 - [ ] 本地最小推理可以生成 WAV。
 - [ ] `uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880` 可以正常启动。
 - [ ] WSL2 中 `curl http://127.0.0.1:9880/health` 正常。
