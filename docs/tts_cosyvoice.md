@@ -2,6 +2,8 @@
 
 本文说明 Sylphos 正式 TTS 模块、CosyVoice 健康检查入口，以及 Runtime EventBus 模拟流程。
 
+> 如需在 WSL2 上部署 CosyVoice3 FastAPI 服务，并由 Windows Sylphos 主程序调用，请参考 [CosyVoice3 WSL2/Windows 部署文档](./cosyvoice3_wsl2_windows_deployment.md)。
+
 ## 1) Python 3.12 环境
 
 ```powershell
