@@ -6,3 +6,6 @@ torchaudio
 modelscope
 numpy
 soundfile
+fastapi
+uvicorn
+pydantic
