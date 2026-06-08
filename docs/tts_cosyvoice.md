@@ -82,7 +82,28 @@ python -m sylphos.voice.tts.healthcheck --text "你好。" --runtime --prompt-wa
 - `sylphos/runtime/tts_handler.py`：Runtime EventBus TTS 处理器。
 - `requirements-tts.txt`：Sylphos TTS 基础依赖，不并入主 `requirements.txt`，也不包含 CosyVoice 本体。
 
-## 8) 常见问题
+
+## 8) WSL2 CosyVoice3 FastAPI 服务脚本
+
+- Sylphos 仓库内的 `sylphos/voice/tts/*` TTS 模块是 Windows 主程序侧适配器和健康检查入口。
+- WSL2 中运行的 CosyVoice3 FastAPI 服务脚本位于仓库路径：`services/cosyvoice3/cosyvoice_server.py`。
+- 部署到 `~/sylphos_services/cosyvoice3/cosyvoice_server.py` 的文件来自上述仓库模板；这是运行时服务目录，不是要求用户凭空找到一个文件。
+- 如果用户只更新了 GitHub 最新版本，应当能在仓库里看到 `services/cosyvoice3/cosyvoice_server.py`。
+- 部署时可以复制模板：
+
+```bash
+mkdir -p ~/sylphos_services/cosyvoice3
+cp services/cosyvoice3/cosyvoice_server.py ~/sylphos_services/cosyvoice3/cosyvoice_server.py
+```
+
+也可以直接从仓库路径启动：
+
+```bash
+cd ~/sylphos/services/cosyvoice3
+python cosyvoice_server.py
+```
+
+## 9) 常见问题
 
 ### 缺少 CosyVoice 依赖
 
