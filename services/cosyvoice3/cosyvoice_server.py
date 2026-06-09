@@ -34,6 +34,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 9880
 DEFAULT_OUTPUT_PATH = "~/sylphos_outputs/tts/latest_tts.wav"
 DEFAULT_SAMPLE_RATE = 24000
+DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
 VALID_MODEL_VERSIONS = {"base", "rl"}
 
 
@@ -99,6 +100,21 @@ def _device() -> str:
 
 def _default_output_path() -> Path:
     return Path(DEFAULT_OUTPUT_PATH).expanduser()
+
+
+def _default_prompt_wav_path() -> Path:
+    return Path(_cosyvoice_repo()).expanduser() / "asset" / "zero_shot_prompt.wav"
+
+
+def _default_prompt_text() -> str:
+    return _env("COSYVOICE_PROMPT_TEXT", DEFAULT_PROMPT_TEXT)
+
+
+def _format_synthesis_error(exc: Exception) -> str:
+    if isinstance(exc, KeyError) and exc.args:
+        speaker = str(exc.args[0])
+        return f"Unsupported speaker {speaker!r} for current model; use zero-shot prompt_wav/prompt_text instead."
+    return str(exc)
 
 
 def _cosyvoice_importable() -> bool:
@@ -213,7 +229,11 @@ class DirectCosyVoiceRuntime:
         output.parent.mkdir(parents=True, exist_ok=True)
 
         prompt_wav = kwargs.pop("prompt_wav", None)
-        prompt_text = kwargs.pop("prompt_text", "") or ""
+        if prompt_wav is None:
+            prompt_wav = str(_default_prompt_wav_path())
+        prompt_text = kwargs.pop("prompt_text", None)
+        if prompt_text is None:
+            prompt_text = _default_prompt_text()
         speaker = kwargs.pop("speaker", None) or kwargs.pop("voice", None)
         generated = self._synthesize(text=text.strip(), prompt_wav=prompt_wav, prompt_text=prompt_text, speaker=speaker, **kwargs)
         audio, sample_rate = self._extract_audio(generated)
@@ -221,28 +241,23 @@ class DirectCosyVoiceRuntime:
         return output
 
     def _synthesize(self, *, text: str, prompt_wav: Any, prompt_text: str, speaker: str | None, **kwargs: Any) -> Any:
-        if prompt_wav:
-            call = getattr(self._engine, "inference_zero_shot", None)
-            if call is None:
-                raise RuntimeError("This CosyVoice runtime does not support prompt_wav / zero-shot synthesis.")
-            return call(text, prompt_text, str(prompt_wav), **kwargs)
-
         if speaker:
-            call = getattr(self._engine, "inference_sft", None)
-            if call is not None:
-                return call(text, speaker, **kwargs)
-            call = getattr(self._engine, "inference_instruct2", None) or getattr(self._engine, "inference_instruct", None)
-            if call is not None:
-                return call(text, speaker, "", **kwargs)
+            try:
+                call = getattr(self._engine, "inference_sft", None)
+                if call is not None:
+                    return call(text, speaker, **kwargs)
+                call = getattr(self._engine, "inference_instruct2", None) or getattr(self._engine, "inference_instruct", None)
+                if call is not None:
+                    return call(text, speaker, "", **kwargs)
+            except KeyError as exc:
+                raise RuntimeError(_format_synthesis_error(exc)) from exc
+            raise RuntimeError(f"Unsupported speaker {speaker!r} for current model; use zero-shot prompt_wav/prompt_text instead.")
 
-        call = getattr(self._engine, "inference_sft", None)
-        if call is not None:
-            return call(text, speaker or "中文女", **kwargs)
-
-        call = getattr(self._engine, "inference", None) or getattr(self._engine, "generate", None)
+        call = getattr(self._engine, "inference_zero_shot", None)
         if call is None:
-            raise RuntimeError("CosyVoice runtime does not expose a usable text-to-speech method.")
-        return call(text, **kwargs)
+            raise RuntimeError("This CosyVoice runtime does not support zero-shot synthesis; provide a model with inference_zero_shot.")
+        kwargs.setdefault("stream", False)
+        return call(text, prompt_text, str(prompt_wav), **kwargs)
 
     def _extract_audio(self, generated: Any) -> tuple[Any, int]:
         item = self._first_generated_item(generated)
@@ -421,7 +436,7 @@ def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
             speaker=request.speaker,
         )
     except Exception as exc:
-        errors.append(str(exc))
+        errors.append(_format_synthesis_error(exc))
 
     payload = {
         "ok": not errors,
@@ -460,14 +475,14 @@ def tts_v1(request: TTSRequest) -> Response:
             "errors": ["CosyVoice output file is not a RIFF/WAVE file."],
         }
         return Response(
-            content=json.dumps(payload).encode("utf-8"),
+            content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             status_code=500,
             media_type="application/json",
         )
 
     status_code = 503 if payload.get("cosyvoice_loaded") is False else 500
     return Response(
-        content=json.dumps(payload).encode("utf-8"),
+        content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         status_code=status_code,
         media_type="application/json",
     )

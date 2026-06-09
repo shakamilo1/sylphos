@@ -75,11 +75,14 @@ def _make_cosyvoice_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "CosyVoice"
     package_dir = repo / "cosyvoice" / "cli"
     matcha_dir = repo / "third_party" / "Matcha-TTS"
+    asset_dir = repo / "asset"
     package_dir.mkdir(parents=True)
     matcha_dir.mkdir(parents=True)
+    asset_dir.mkdir(parents=True)
     (repo / "cosyvoice" / "__init__.py").write_text("")
     (package_dir / "__init__.py").write_text("")
     (package_dir / "cosyvoice.py").write_text("class AutoModel:\n    def __init__(self, **kwargs):\n        self.kwargs = kwargs\n")
+    (asset_dir / "zero_shot_prompt.wav").write_bytes(WAV_BYTES)
     return repo
 
 
@@ -223,6 +226,79 @@ def test_health_reports_model_load_failure(server, monkeypatch: pytest.MonkeyPat
     assert any("load boom" in error for error in payload["errors"])
 
 
+
+
+def test_default_v1_tts_uses_zero_shot_prompt_without_speaker(
+    server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _make_cosyvoice_repo(tmp_path)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    calls = []
+
+    class FakeAutoModel:
+        sample_rate = 24000
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def inference_zero_shot(self, text, prompt_text, prompt_wav, **kwargs):
+            calls.append((text, prompt_text, prompt_wav, kwargs))
+            yield {"tts_speech": WAV_BYTES, "sample_rate": self.sample_rate}
+
+        def inference_sft(self, text, speaker, **kwargs):
+            raise AssertionError(f"Default request must not use speaker mode: {speaker}")
+
+    fake_module = types.SimpleNamespace(AutoModel=FakeAutoModel)
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setattr(server, "_module_exists", lambda name: name == "cosyvoice.cli.cosyvoice")
+    monkeypatch.setattr(importlib, "import_module", lambda name, package=None: fake_module)
+    request = _request(text="你好")
+    request.output_path = str(tmp_path / "out.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert response.body.startswith(b"RIFF")
+    assert len(calls) == 1
+    assert calls[0][0] == "你好"
+    assert calls[0][1] == server.DEFAULT_PROMPT_TEXT
+    assert calls[0][2] == str(repo / "asset" / "zero_shot_prompt.wav")
+    assert calls[0][3]["stream"] is False
+
+
+def test_request_prompt_values_override_zero_shot_defaults(
+    server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _make_cosyvoice_repo(tmp_path)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    calls = []
+
+    class FakeAutoModel:
+        sample_rate = 24000
+
+        def __init__(self, **kwargs):
+            pass
+
+        def inference_zero_shot(self, text, prompt_text, prompt_wav, **kwargs):
+            calls.append((prompt_text, prompt_wav))
+            yield {"tts_speech": WAV_BYTES, "sample_rate": self.sample_rate}
+
+    fake_module = types.SimpleNamespace(AutoModel=FakeAutoModel)
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setattr(server, "_module_exists", lambda name: name == "cosyvoice.cli.cosyvoice")
+    monkeypatch.setattr(importlib, "import_module", lambda name, package=None: fake_module)
+    request = _request()
+    request.output_path = str(tmp_path / "out.wav")
+    request.prompt_wav = "/tmp/custom_prompt.wav"
+    request.prompt_text = "custom prompt"
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert calls == [("custom prompt", "/tmp/custom_prompt.wav")]
+
 def test_v1_tts_returns_503_when_model_not_loaded(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     repo = _make_cosyvoice_repo(tmp_path)
     missing_model = tmp_path / "missing-model"
@@ -237,10 +313,12 @@ def test_v1_tts_returns_503_when_model_not_loaded(server, monkeypatch: pytest.Mo
     assert b"model path does not exist" in response.body
 
 
-def test_v1_tts_returns_500_when_synthesis_fails(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_v1_tts_returns_500_with_clear_error_when_synthesis_hits_speaker_keyerror(
+    server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     class FailingRuntime:
         def synthesize_to_file(self, *args, **kwargs):
-            raise RuntimeError("synthesis boom")
+            raise KeyError("中文女")
 
     base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
     monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
@@ -250,7 +328,9 @@ def test_v1_tts_returns_500_when_synthesis_fails(server, monkeypatch: pytest.Mon
 
     assert response.status_code == 500
     assert b'"ok": false' in response.body
-    assert b"synthesis boom" in response.body
+    assert b"Unsupported speaker" in response.body
+    assert "中文女".encode("utf-8") in response.body
+    assert b"zero-shot prompt_wav/prompt_text" in response.body
 
 
 def test_v1_tts_returns_wav_bytes_on_success(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

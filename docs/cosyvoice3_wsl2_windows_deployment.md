@@ -562,14 +562,14 @@ python cosyvoice_server.py
    - `text`：需要合成的文本。
    - `model_version`：可选，`base` 或 `rl`，默认 `base`。
    - `output_path`：可选，WSL2/Linux 内的 WAV 输出路径；未提供时默认写入 `~/sylphos_outputs/tts/latest_tts.wav`。
-   - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本。
-   - `speaker`：可选说话人/音色名。
+   - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本；不传时使用服务默认值。
+   - `speaker`：可选说话人/音色名；只有明确需要 SFT / speaker 模式时才传，默认测试不使用 `speaker="中文女"`。
 4. 通过 `COSYVOICE_REPO` 指向本地 CosyVoice 官方仓库源码，并在启动时自动加入：
    - `/home/shakamilo/CosyVoice`
    - `/home/shakamilo/CosyVoice/third_party/Matcha-TTS`
 5. 通过 `COSYVOICE_MODEL_PATH`、`COSYVOICE_RL_MODEL_PATH` 和 `COSYVOICE_DEVICE` 选择 Base / RL 模型目录与设备。
 6. 直接从官方仓库导入 `from cosyvoice.cli.cosyvoice import AutoModel`，不要求 CosyVoice 已经通过 `pip install` 安装到 site-packages。
-7. 调用 CosyVoice3 生成 WAV 音频；`/tts` 会以 JSON 返回 `wav_base64` 以便兼容调试和旧式调用，`/v1/tts` 会返回 `audio/wav`。
+7. 默认通过 `inference_zero_shot` 调用 CosyVoice3 生成 WAV 音频；`/tts` 会以 JSON 返回 `wav_base64` 以便兼容调试和旧式调用，`/v1/tts` 会返回 `audio/wav`。
 8. 在缺少 `cosyvoice` 源码、模型路径不存在、模型加载失败或合成失败时返回明确错误信息，不在服务导入阶段崩溃。
 
 ### 9.3 推荐服务配置项
@@ -581,6 +581,8 @@ COSYVOICE_REPO=~/CosyVoice
 COSYVOICE_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
 COSYVOICE_RL_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 COSYVOICE_DEVICE=cuda
+# 默认 zero-shot prompt_wav 为 COSYVOICE_REPO/asset/zero_shot_prompt.wav
+# 默认 prompt_text 为：You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
 COSYVOICE_HOST=0.0.0.0
 COSYVOICE_PORT=9880
 ```
@@ -595,6 +597,8 @@ export COSYVOICE_DEVICE=cuda
 ```
 
 > 注意：`AutoModel` 对目录名识别较敏感。不要把 `pretrained_models/base` 或 `pretrained_models/rl` 这类简化软链接直接传给服务端；应传入包含模型名的真实目录，例如 `Fun-CosyVoice3-0.5B` 或 `Fun-CosyVoice3-0.5B-rl`。
+
+默认测试链路使用 CosyVoice3 zero-shot 模式，不使用 `speaker="中文女"`。服务默认参考音频是 `COSYVOICE_REPO/asset/zero_shot_prompt.wav`，例如 `/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav`；默认 `prompt_text` 是：`You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。`。如果请求体显式传入 `prompt_wav` 或 `prompt_text`，会覆盖这些默认值。
 
 ### 9.4 启动 FastAPI 服务
 
@@ -679,14 +683,15 @@ curl http://127.0.0.1:9880/health
 可以使用 curl 发送一次 TTS 请求：
 
 ```bash
-curl -X POST http://127.0.0.1:9880/tts \
+curl --fail -X POST http://127.0.0.1:9880/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我是 Sylphos。","output_path":"/tmp/sylphos_tts_test.wav","prompt_wav":null,"prompt_text":null}'
+  -d '{"text":"你好，我是 Sylphos。","model_version":"base"}'
 
-# 兼容 Windows 端现有客户端，也可以调用：
-curl -X POST http://127.0.0.1:9880/v1/tts \
+# Windows 端现有客户端调用的是 /v1/tts：
+curl --fail -X POST http://127.0.0.1:9880/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我是 Sylphos。","output_path":"/tmp/sylphos_tts_test.wav"}'
+  -d '{"text":"你好，我是 Sylphos。","model_version":"base"}' \
+  --output /tmp/sylphos_tts_test.wav
 ```
 
 检查输出文件：
@@ -697,10 +702,10 @@ file /tmp/sylphos_tts_test.wav
 
 如果 JSON 返回 `ok: true` 且 `output_path` 指向的文件存在，说明 `/tts` 接口可用。
 
-测试 Windows 端实际使用的 `/v1/tts` 二进制 WAV 接口时，建议同时记录 HTTP 状态码：
+测试 Windows 端实际使用的 `/v1/tts` 二进制 WAV 接口时，建议加上 `--fail` 并同时记录 HTTP 状态码，避免失败 JSON 被保存成 `.wav`：
 
 ```bash
-curl -sS -X POST http://127.0.0.1:9880/v1/tts \
+curl --fail -sS -X POST http://127.0.0.1:9880/v1/tts \
   -H "Content-Type: application/json" \
   -d '{"text":"你好，我正在使用兼容接口。","model_version":"base"}' \
   --output /tmp/sylphos_tts_test_v1.wav \
@@ -710,7 +715,7 @@ file /tmp/sylphos_tts_test_v1.wav
 
 `/v1/tts` 的预期行为是：成功时返回 `HTTP 200`、`Content-Type: audio/wav`，保存出来的文件应被 `file` 识别为 `RIFF/WAVE`、`audio/x-wav` 或类似 WAV 类型。
 
-如果执行 `curl --output xxx.wav` 后，`file xxx.wav` 显示 `JSON text data`，说明服务端返回的是错误 JSON，不是音频。此时不要播放该文件，应先查看 HTTP 状态码和 JSON 错误内容：模型未加载或导入失败通常会返回 `503 Service Unavailable`，合成过程中异常通常会返回 `500 Internal Server Error`。可以临时去掉 `--output`，或另存为 `.json` 查看 `errors` 字段。
+如果执行 `curl --output xxx.wav` 后，`file xxx.wav` 显示 `JSON text data`，说明服务端返回的是错误 JSON，不是音频。此时不要播放该文件，应先查看 HTTP 状态码和 JSON 的 `error` / `errors` 字段：模型未加载或导入失败通常会返回 `503 Service Unavailable`，合成过程中异常通常会返回 `500 Internal Server Error`。可以临时去掉 `--output`，或另存为 `.json` 查看 `error` 字段。
 
 ---
 
