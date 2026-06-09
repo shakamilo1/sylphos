@@ -765,9 +765,10 @@ Windows Sylphos 端推荐按以下流程处理响应：
 %TEMP%\sylphos_tts\
 ```
 
-6. 调用 Windows 默认播放器打开 WAV 文件。
-7. 每次合成生成新的文件名，避免多次调用时覆盖上一段语音。
-8. 如果接口失败、网络异常或返回内容不是有效音频，应在 Sylphos 日志或界面中输出错误信息。
+6. 在 Windows 端默认使用 `winsound` 后台播放 WAV，像语音助手一样直接从音箱播放，不弹出播放器窗口。
+7. 如果 `winsound` 播放失败，`play_backend="auto"` 会自动回退到系统默认播放器。
+8. 每次合成生成新的文件名，避免多次调用时覆盖上一段语音。
+9. 如果接口失败、网络异常或返回内容不是有效音频，应在 Sylphos 日志或界面中输出错误信息。
 
 ### 10.4 Base / RL 模型选择
 
@@ -793,14 +794,33 @@ Windows Sylphos 端只需要通过请求参数选择模型版本：
 
 ### 10.5 Windows 端播放说明
 
-Windows 端拿到 WAV 文件后，可以使用系统默认播放器播放。推荐流程为：
+Windows 端拿到 WAV 文件后，`TTSClient(..., auto_play=True)` 默认使用 `play_backend="auto"`。在 Windows 上该模式会优先调用标准库 `winsound.PlaySound(..., winsound.SND_FILENAME)` 阻塞播放 WAV，因此正常情况下会直接从 Windows 音箱播放，不再弹出默认播放器窗口。
+
+推荐流程为：
 
 1. 将 WAV 内容写入临时文件。
 2. 确认文件存在且大小大于 0。
-3. 使用 Windows 默认关联程序打开 WAV。
-4. 多次调用时，每次生成独立文件名。
+3. Windows 上优先用 `winsound` 后台播放，保证语音播完。
+4. 如果 `winsound` 播放失败，自动回退到默认播放器打开 WAV，并在 stderr 中输出可读提示。
+5. macOS / Linux 仍保持原有 `open` / `xdg-open` fallback。
+6. 多次调用时，每次生成独立文件名。
 
-该方式不要求 Sylphos 内部实现复杂音频播放引擎，适合部署验证和早期集成。
+如果调试时希望显式打开系统默认播放器，可以创建客户端时设置：
+
+```python
+from sylphos.voice.tts import TTSClient
+
+client = TTSClient(auto_play=True, play_backend="default_app")
+client.speak("你好，我是 Sylphos。")
+```
+
+可选 `play_backend`：
+
+| 值 | 行为 |
+| --- | --- |
+| `auto` | 默认值；Windows 优先 `winsound`，失败后回退默认播放器；其他系统保持原有 fallback |
+| `winsound` | 强制使用 Windows `winsound` 播放；非 Windows 环境会给出清晰错误 |
+| `default_app` | 使用原来的默认播放器方案：Windows `os.startfile`、macOS `open`、Linux `xdg-open` |
 
 ---
 
@@ -942,11 +962,12 @@ http://172.xx.xx.xx:9880/health
 - [ ] Windows 端可以访问 `http://127.0.0.1:9880/health`。
 - [ ] Windows Sylphos 可以向 `/v1/tts` 发送文本和 `model_version`。
 - [ ] Windows Sylphos 可以保存并播放返回的 WAV 文件。
+- [ ] Windows 默认 `play_backend="auto"` 可以通过音箱后台播放，不弹出播放器窗口；如需弹窗调试，可设置 `play_backend="default_app"`。
 
 ---
 
 ## 13. 小结
 
-通过以上步骤，CosyVoice3 被部署在 WSL2 Ubuntu 中，使用 Conda 管理 Python 3.10 环境，并通过 PyTorch CUDA 调用 GPU 完成语音合成。模型目录使用 `Fun-CosyVoice3-0.5B` 作为 Base 标准目录，并通过复制为 `Fun-CosyVoice3-0.5B-rl` 后替换 `llm.pt` 启用 RL 版本，便于服务端按请求参数切换。FastAPI 服务监听 `9880` 端口，Windows Sylphos 主程序通过 HTTP 调用 `/v1/tts`，传入文本与模型版本，接收生成音频后保存到 Windows 临时目录并调用默认播放器播放。
+通过以上步骤，CosyVoice3 被部署在 WSL2 Ubuntu 中，使用 Conda 管理 Python 3.10 环境，并通过 PyTorch CUDA 调用 GPU 完成语音合成。模型目录使用 `Fun-CosyVoice3-0.5B` 作为 Base 标准目录，并通过复制为 `Fun-CosyVoice3-0.5B-rl` 后替换 `llm.pt` 启用 RL 版本，便于服务端按请求参数切换。FastAPI 服务监听 `9880` 端口，Windows Sylphos 主程序通过 HTTP 调用 `/v1/tts`，传入文本与模型版本，接收生成音频后保存到 Windows 临时目录，并默认通过 `winsound` 在后台播放。
 
 该架构将高负载的语音合成推理放在 WSL2 GPU 环境中，将 Sylphos 主程序保留在 Windows 端运行，既便于利用本机 GPU 性能，也便于 Windows 桌面应用直接集成语音播放能力。

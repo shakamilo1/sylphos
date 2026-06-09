@@ -99,3 +99,94 @@ def test_rejects_invalid_model_version():
         assert "rl" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_windows_auto_play_prefers_winsound(monkeypatch, tmp_path):
+    import sys
+    import types
+    import sylphos.voice.tts.wsl_cosyvoice_client as client_module
+
+    wav_path = tmp_path / "sound.wav"
+    wav_path.write_bytes(WAV_BYTES)
+    calls = []
+    fake_winsound = types.SimpleNamespace(
+        SND_FILENAME=0x20000,
+        PlaySound=lambda path, flags: calls.append((path, flags)),
+    )
+    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
+    monkeypatch.setattr(client_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(client_module.os, "startfile", lambda path: calls.append(("startfile", path)), raising=False)
+
+    TTSClient(auto_play=False, play_backend="auto").play(wav_path)
+
+    assert calls == [(str(wav_path.resolve()), fake_winsound.SND_FILENAME)]
+
+
+def test_windows_auto_play_falls_back_to_default_app_when_winsound_fails(monkeypatch, tmp_path, capsys):
+    import sys
+    import types
+    import sylphos.voice.tts.wsl_cosyvoice_client as client_module
+
+    wav_path = tmp_path / "sound.wav"
+    wav_path.write_bytes(WAV_BYTES)
+    calls = []
+
+    def fail_play_sound(path, flags):
+        raise RuntimeError("audio device busy")
+
+    fake_winsound = types.SimpleNamespace(SND_FILENAME=0x20000, PlaySound=fail_play_sound)
+    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
+    monkeypatch.setattr(client_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(client_module.os, "startfile", lambda path: calls.append(path), raising=False)
+
+    TTSClient(auto_play=False, play_backend="auto").play(wav_path)
+
+    assert calls == [str(wav_path.resolve())]
+    assert "winsound playback failed" in capsys.readouterr().err
+
+
+def test_default_app_backend_uses_existing_windows_startfile_behavior(monkeypatch, tmp_path):
+    import sys
+    import types
+    import sylphos.voice.tts.wsl_cosyvoice_client as client_module
+
+    wav_path = tmp_path / "sound.wav"
+    wav_path.write_bytes(WAV_BYTES)
+    calls = []
+    fake_winsound = types.SimpleNamespace(
+        SND_FILENAME=0x20000,
+        PlaySound=lambda path, flags: calls.append(("winsound", path, flags)),
+    )
+    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
+    monkeypatch.setattr(client_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(client_module.os, "startfile", lambda path: calls.append(("startfile", path)), raising=False)
+
+    TTSClient(auto_play=False, play_backend="default_app").play(wav_path)
+
+    assert calls == [("startfile", str(wav_path.resolve()))]
+
+
+def test_non_windows_auto_play_keeps_xdg_open_fallback(monkeypatch, tmp_path):
+    import sylphos.voice.tts.wsl_cosyvoice_client as client_module
+
+    wav_path = tmp_path / "sound.wav"
+    wav_path.write_bytes(WAV_BYTES)
+    calls = []
+    monkeypatch.setattr(client_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(client_module.sys, "platform", "linux")
+    monkeypatch.setattr(client_module.subprocess, "Popen", lambda args: calls.append(args))
+
+    TTSClient(auto_play=False, play_backend="auto").play(wav_path)
+
+    assert calls == [["xdg-open", str(wav_path.resolve())]]
+
+
+def test_rejects_invalid_play_backend():
+    try:
+        TTSClient(play_backend="bad")
+    except ValueError as exc:
+        assert "auto" in str(exc)
+        assert "winsound" in str(exc)
+        assert "default_app" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
