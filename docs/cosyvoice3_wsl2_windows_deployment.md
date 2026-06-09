@@ -747,6 +747,8 @@ file /tmp/sylphos_tts_test_v1.wav
 
 如果执行 `curl --output xxx.wav` 后，`file xxx.wav` 显示 `JSON text data`，说明服务端返回的是错误 JSON，不是音频。此时不要播放该文件，应先查看 HTTP 状态码和 JSON 的 `error` / `errors` 字段：模型未加载或导入失败通常会返回 `503 Service Unavailable`，合成过程中异常通常会返回 `500 Internal Server Error`。可以临时去掉 `--output`，或另存为 `.json` 查看 `error` 字段。
 
+长文本可能会被 CosyVoice 在内部自动分段生成，服务端会完整消费 `inference_zero_shot` / speaker 推理接口返回的 generator，并把所有 `tts_speech` 片段按时间顺序拼接成一个 WAV 后再返回。生产使用中，超长文本仍建议 Sylphos 上层按句子或自然段切分，以便控制延迟、进度和打断；但服务端本身应能返回一次请求的完整合成结果。测试长文本时，除了检查 HTTP 200 和 WAV 文件类型，也要实际确认最后一句已经播放出来，避免只听到第一个生成片段。
+
 ---
 
 ## 10. Windows Sylphos 端调用流程

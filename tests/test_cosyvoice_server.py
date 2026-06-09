@@ -522,3 +522,115 @@ def test_tts_json_endpoint_returns_400_for_missing_voice_id_prompt(server, monke
     assert b'"ok": false' in response.body
     assert b"missing_voice.wav" in response.body
     assert b"missing_voice.txt" in response.body
+
+
+def test_zero_shot_generator_multiple_chunks_are_concatenated(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import io
+    import wave
+    import torch
+
+    repo = _make_cosyvoice_repo(tmp_path)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    yielded = []
+
+    class FakeAutoModel:
+        sample_rate = 24000
+
+        def __init__(self, **kwargs):
+            pass
+
+        def inference_zero_shot(self, text, prompt_text, prompt_wav, **kwargs):
+            first = torch.zeros(1, 2)
+            second = torch.zeros(1, 3)
+            yielded.extend([first, second])
+            yield {"tts_speech": first}
+            yield {"tts_speech": second}
+
+    original_import_module = importlib.import_module
+    fake_module = types.SimpleNamespace(AutoModel=FakeAutoModel)
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setattr(server, "_module_exists", lambda name: name == "cosyvoice.cli.cosyvoice")
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "cosyvoice.cli.cosyvoice" else original_import_module(name, package),
+    )
+    request = _request(text="长文本")
+    request.output_path = str(tmp_path / "long.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert len(yielded) == 2
+    with wave.open(io.BytesIO(response.body), "rb") as wav_file:
+        assert wav_file.getnframes() == 5
+
+
+def test_zero_shot_generator_single_chunk_still_succeeds(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import io
+    import wave
+    import torch
+
+    repo = _make_cosyvoice_repo(tmp_path)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+
+    class FakeAutoModel:
+        sample_rate = 24000
+
+        def __init__(self, **kwargs):
+            pass
+
+        def inference_zero_shot(self, text, prompt_text, prompt_wav, **kwargs):
+            yield {"tts_speech": torch.zeros(4)}
+
+    original_import_module = importlib.import_module
+    fake_module = types.SimpleNamespace(AutoModel=FakeAutoModel)
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setattr(server, "_module_exists", lambda name: name == "cosyvoice.cli.cosyvoice")
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "cosyvoice.cli.cosyvoice" else original_import_module(name, package),
+    )
+    request = _request(text="短文本")
+    request.output_path = str(tmp_path / "short.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    with wave.open(io.BytesIO(response.body), "rb") as wav_file:
+        assert wav_file.getnframes() == 4
+
+
+def test_zero_shot_generator_without_chunks_returns_500_json(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    repo = _make_cosyvoice_repo(tmp_path)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+
+    class FakeAutoModel:
+        sample_rate = 24000
+
+        def __init__(self, **kwargs):
+            pass
+
+        def inference_zero_shot(self, text, prompt_text, prompt_wav, **kwargs):
+            if False:
+                yield {"tts_speech": None}
+
+    original_import_module = importlib.import_module
+    fake_module = types.SimpleNamespace(AutoModel=FakeAutoModel)
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setattr(server, "_module_exists", lambda name: name == "cosyvoice.cli.cosyvoice")
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "cosyvoice.cli.cosyvoice" else original_import_module(name, package),
+    )
+
+    response = server.tts_v1(_request(text="空生成"))
+
+    assert response.status_code == 500
+    assert b'"ok": false' in response.body
+    assert b"did not yield any audio chunks" in response.body

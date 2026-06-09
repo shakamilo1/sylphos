@@ -183,6 +183,31 @@ class TTSRequest(BaseModel):
     model_version: str = Field(default="base", description="CosyVoice3 model version: 'base' or 'rl'.")
 
 
+def concat_tts_chunks(chunks: list[Any]) -> Any:
+    """Concatenate CosyVoice tts_speech chunks along the time axis."""
+
+    if not chunks:
+        raise RuntimeError("CosyVoice did not yield any audio chunks.")
+    if len(chunks) == 1:
+        return chunks[0]
+
+    torch = importlib.import_module("torch")
+    tensors = [torch.as_tensor(chunk).detach().cpu() for chunk in chunks]
+    if all(tensor.ndim == 1 for tensor in tensors):
+        return torch.cat(tensors, dim=0)
+
+    normalized = []
+    for tensor in tensors:
+        if tensor.ndim == 1:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.ndim > 2:
+            tensor = tensor.reshape(1, -1)
+        elif tensor.shape[0] > tensor.shape[-1]:
+            tensor = tensor.transpose(0, 1)
+        normalized.append(tensor)
+    return torch.cat(normalized, dim=-1)
+
+
 class DirectCosyVoiceRuntime:
     """Minimal direct CosyVoice wrapper loaded from the official source repo."""
 
@@ -274,28 +299,34 @@ class DirectCosyVoiceRuntime:
         return call(text, prompt_text, str(prompt_wav), **kwargs)
 
     def _extract_audio(self, generated: Any) -> tuple[Any, int]:
-        item = self._first_generated_item(generated)
-        audio = item
-        sample_rate = self.sample_rate
-        if isinstance(item, dict):
-            for key in ("tts_speech", "speech", "audio", "wav"):
-                if item.get(key) is not None:
-                    audio = item[key]
-                    break
-            sample_rate = int(item.get("sample_rate") or item.get("sampling_rate") or item.get("sr") or sample_rate)
-        if audio is None:
-            raise RuntimeError("CosyVoice did not return writable audio data.")
-        return audio, sample_rate
+        chunks: list[Any] = []
+        sample_rate = int(getattr(self._engine, "sample_rate", self.sample_rate) or self.sample_rate)
 
-    def _first_generated_item(self, generated: Any) -> Any:
+        for item in self._generated_items(generated):
+            audio = item
+            if isinstance(item, dict):
+                for key in ("tts_speech", "speech", "audio", "wav"):
+                    if item.get(key) is not None:
+                        audio = item[key]
+                        break
+                sample_rate = int(item.get("sample_rate") or item.get("sampling_rate") or item.get("sr") or sample_rate)
+            if audio is not None:
+                chunks.append(audio)
+
+        if not chunks:
+            raise RuntimeError("CosyVoice did not yield any audio chunks.")
+        return concat_tts_chunks(chunks), sample_rate
+
+    def _generated_items(self, generated: Any) -> list[Any]:
         if isinstance(generated, dict):
-            return generated
-        if isinstance(generated, (str, bytes, bytearray)):
-            return generated
+            return [generated]
+        if isinstance(generated, (str, bytes, bytearray, Path)):
+            return [generated]
+        if hasattr(generated, "shape") or hasattr(generated, "ndim"):
+            return [generated]
         if isinstance(generated, Iterable):
-            for item in generated:
-                return item
-        return generated
+            return list(generated)
+        return [generated]
 
     def _write_wav(self, output: Path, *, audio: Any, sample_rate: int) -> None:
         if isinstance(audio, (str, Path)):
