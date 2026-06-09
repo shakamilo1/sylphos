@@ -695,15 +695,22 @@ curl -X POST http://127.0.0.1:9880/v1/tts \
 file /tmp/sylphos_tts_test.wav
 ```
 
-如果 JSON 返回 `ok: true` 且 `output_path` 指向的文件存在，说明 `/tts` 接口可用；`/v1/tts` 是兼容别名。
+如果 JSON 返回 `ok: true` 且 `output_path` 指向的文件存在，说明 `/tts` 接口可用。
 
-测试兼容接口：
+测试 Windows 端实际使用的 `/v1/tts` 二进制 WAV 接口时，建议同时记录 HTTP 状态码：
 
 ```bash
-curl -X POST http://127.0.0.1:9880/v1/tts \
+curl -sS -X POST http://127.0.0.1:9880/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我正在使用兼容接口。","output_path":"/tmp/sylphos_tts_test_v1.wav"}'
+  -d '{"text":"你好，我正在使用兼容接口。","model_version":"base"}' \
+  --output /tmp/sylphos_tts_test_v1.wav \
+  --write-out '\nHTTP %{http_code}\n'
+file /tmp/sylphos_tts_test_v1.wav
 ```
+
+`/v1/tts` 的预期行为是：成功时返回 `HTTP 200`、`Content-Type: audio/wav`，保存出来的文件应被 `file` 识别为 `RIFF/WAVE`、`audio/x-wav` 或类似 WAV 类型。
+
+如果执行 `curl --output xxx.wav` 后，`file xxx.wav` 显示 `JSON text data`，说明服务端返回的是错误 JSON，不是音频。此时不要播放该文件，应先查看 HTTP 状态码和 JSON 错误内容：模型未加载或导入失败通常会返回 `503 Service Unavailable`，合成过程中异常通常会返回 `500 Internal Server Error`。可以临时去掉 `--output`，或另存为 `.json` 查看 `errors` 字段。
 
 ---
 

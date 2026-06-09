@@ -156,8 +156,11 @@ class TTSRequest(BaseModel):
 class DirectCosyVoiceRuntime:
     """Minimal direct CosyVoice wrapper loaded from the official source repo."""
 
-    def __init__(self, model_path: str, device: str) -> None:
+    def __init__(self, model_path: str, device: str | None = None) -> None:
         self.model_path = model_path
+        # COSYVOICE_DEVICE is reported in /health for diagnostics, but is not
+        # passed into official CosyVoice constructors unless their signatures
+        # explicitly add support for it in the future.
         self.device = device
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self._engine = self._build_model()
@@ -185,25 +188,22 @@ class DirectCosyVoiceRuntime:
         else:
             raise RuntimeError("CosyVoice install does not expose AutoModel, CosyVoice3, CosyVoice2, or CosyVoice.")
 
-        kwargs: dict[str, Any] = {
-            "model_dir": self.model_path,
-            "device": self.device,
-            "load_jit": False,
-            "load_trt": False,
-            "load_vllm": False,
-        }
+        # Match the verified minimal CosyVoice3 invocation as closely as
+        # possible: AutoModel(model_dir="...").  In particular, do not pass
+        # device=... into AutoModel/CosyVoice3/CosyVoice2/CosyVoice just because
+        # COSYVOICE_DEVICE exists for health diagnostics.
+        kwargs: dict[str, Any] = {"model_dir": self.model_path}
         try:
             init_signature = inspect.signature(engine_class)
         except (TypeError, ValueError):
             return engine_class(**kwargs)
 
-        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_signature.parameters.values())
-        if not accepts_kwargs:
-            filtered = {key: value for key, value in kwargs.items() if key in init_signature.parameters}
-            if not filtered and init_signature.parameters:
-                return engine_class(self.model_path)
-            kwargs = filtered
-        return engine_class(**kwargs)
+        parameters = init_signature.parameters
+        if "model_dir" in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            if "device" in parameters:
+                kwargs["device"] = self.device
+            return engine_class(**kwargs)
+        return engine_class(self.model_path)
 
     def synthesize_to_file(self, text: str, output_path: str | Path, **kwargs: Any) -> Any:
         if not text or not text.strip():
@@ -394,19 +394,24 @@ def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
     output_path = Path(request.output_path).expanduser() if request.output_path else _default_output_path()
     version = (request.model_version or "base").strip().lower()
     errors: list[str] = []
+    runtime_loaded = False
 
     try:
         model_path = _model_path_for_version(version)
         runtime, load_errors = _get_runtime(version)
         if runtime is None:
+            errors = load_errors or ["CosyVoice runtime is not loaded."]
             return {
                 "ok": False,
+                "error": errors[0],
+                "cosyvoice_loaded": False,
                 "model_version": version,
                 "model_path": model_path,
                 "output_path": str(output_path),
                 "elapsed_seconds": round(time.perf_counter() - started, 3),
-                "errors": load_errors or ["CosyVoice runtime is not loaded."],
+                "errors": errors,
             }, output_path
+        runtime_loaded = True
         output_path.parent.mkdir(parents=True, exist_ok=True)
         runtime.synthesize_to_file(
             request.text,
@@ -420,6 +425,8 @@ def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
 
     payload = {
         "ok": not errors,
+        "error": errors[0] if errors else "",
+        "cosyvoice_loaded": runtime_loaded,
         "model_version": version,
         "model_path": _model_path_for_version(version) if version in VALID_MODEL_VERSIONS else "",
         "output_path": str(output_path),
@@ -443,10 +450,25 @@ def tts_v1(request: TTSRequest) -> Response:
 
     payload, output_path = _synthesize_request(request)
     if payload.get("ok") and output_path.exists():
-        return Response(content=output_path.read_bytes(), media_type="audio/wav")
+        wav_bytes = output_path.read_bytes()
+        if wav_bytes.startswith(b"RIFF") and b"WAVE" in wav_bytes[:16]:
+            return Response(content=wav_bytes, media_type="audio/wav")
+        payload = {
+            **payload,
+            "ok": False,
+            "error": "CosyVoice output file is not a RIFF/WAVE file.",
+            "errors": ["CosyVoice output file is not a RIFF/WAVE file."],
+        }
+        return Response(
+            content=json.dumps(payload).encode("utf-8"),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    status_code = 503 if payload.get("cosyvoice_loaded") is False else 500
     return Response(
         content=json.dumps(payload).encode("utf-8"),
-        status_code=500,
+        status_code=status_code,
         media_type="application/json",
     )
 
