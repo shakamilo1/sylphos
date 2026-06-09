@@ -99,6 +99,7 @@ def _request(text: str = "你好", model_version: str = "base"):
         prompt_wav=None,
         prompt_text=None,
         speaker=None,
+        voice_id=None,
         model_version=model_version,
     )
 
@@ -350,3 +351,174 @@ def test_v1_tts_returns_wav_bytes_on_success(server, monkeypatch: pytest.MonkeyP
     assert response.status_code == 200
     assert "audio/wav" in (response.media_type or response.headers.get("content-type", ""))
     assert response.body.startswith(b"RIFF")
+
+
+def test_health_reports_prompt_configuration(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    repo = _make_cosyvoice_repo(tmp_path)
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    prompt_wav = prompt_dir / "default.wav"
+    prompt_wav.write_bytes(WAV_BYTES)
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_REPO", str(repo))
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_WAV", str(prompt_wav))
+    monkeypatch.setenv("COSYVOICE_PROMPT_TEXT", "env prompt text")
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (object(), []))
+
+    payload = server.health()
+
+    assert payload["default_prompt_wav"] == str(prompt_wav)
+    assert payload["default_prompt_wav_exists"] is True
+    assert payload["prompt_dir"] == str(prompt_dir)
+    assert payload["prompt_dir_exists"] is True
+    assert payload["prompt_text_configured"] is True
+    assert "env prompt text" not in payload.values()
+
+
+def test_env_prompt_values_are_used_when_request_does_not_override(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = []
+    prompt_wav = tmp_path / "env_prompt.wav"
+    prompt_wav.write_bytes(WAV_BYTES)
+
+    class FakeRuntime:
+        def synthesize_to_file(self, text, output_path, **kwargs):
+            calls.append(kwargs)
+            Path(output_path).write_bytes(WAV_BYTES)
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_WAV", str(prompt_wav))
+    monkeypatch.setenv("COSYVOICE_PROMPT_TEXT", "env prompt text")
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.output_path = str(tmp_path / "out.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert calls == [{"prompt_wav": str(prompt_wav), "prompt_text": "env prompt text", "speaker": None}]
+
+
+def test_voice_id_resolves_prompt_dir_wav_and_txt(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = []
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    (prompt_dir / "female_01.wav").write_bytes(WAV_BYTES)
+    (prompt_dir / "female_01.txt").write_text("female prompt text", encoding="utf-8")
+
+    class FakeRuntime:
+        def synthesize_to_file(self, text, output_path, **kwargs):
+            calls.append(kwargs)
+            Path(output_path).write_bytes(WAV_BYTES)
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.voice_id = "female_01"
+    request.output_path = str(tmp_path / "out.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert calls == [{"prompt_wav": str(prompt_dir / "female_01.wav"), "prompt_text": "female prompt text", "speaker": None}]
+
+
+def test_voice_id_missing_prompt_file_returns_400(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    (prompt_dir / "female_01.wav").write_bytes(WAV_BYTES)
+
+    class FakeRuntime:
+        def synthesize_to_file(self, *args, **kwargs):
+            raise AssertionError("missing voice_id prompts should fail before synthesis")
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.voice_id = "female_01"
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 400
+    assert b'"ok": false' in response.body
+    assert b"female_01.txt" in response.body
+
+
+def test_request_prompt_values_take_priority_over_voice_id(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = []
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    (prompt_dir / "female_01.wav").write_bytes(WAV_BYTES)
+    (prompt_dir / "female_01.txt").write_text("female prompt text", encoding="utf-8")
+
+    class FakeRuntime:
+        def synthesize_to_file(self, text, output_path, **kwargs):
+            calls.append(kwargs)
+            Path(output_path).write_bytes(WAV_BYTES)
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.voice_id = "female_01"
+    request.prompt_wav = "/tmp/custom.wav"
+    request.prompt_text = "custom text"
+    request.output_path = str(tmp_path / "out.wav")
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 200
+    assert calls == [{"prompt_wav": "/tmp/custom.wav", "prompt_text": "custom text", "speaker": None}]
+
+
+def test_voice_id_missing_wav_file_returns_400(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    (prompt_dir / "male_01.txt").write_text("male prompt text", encoding="utf-8")
+
+    class FakeRuntime:
+        def synthesize_to_file(self, *args, **kwargs):
+            raise AssertionError("missing voice_id prompts should fail before synthesis")
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.voice_id = "male_01"
+
+    response = server.tts_v1(request)
+
+    assert response.status_code == 400
+    assert b'"ok": false' in response.body
+    assert b"male_01.wav" in response.body
+
+
+def test_tts_json_endpoint_returns_400_for_missing_voice_id_prompt(server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+
+    class FakeRuntime:
+        def synthesize_to_file(self, *args, **kwargs):
+            raise AssertionError("missing voice_id prompts should fail before synthesis")
+
+    base = _make_model_dir(tmp_path, "Fun-CosyVoice3-0.5B")
+    monkeypatch.setenv("COSYVOICE_MODEL_PATH", str(base))
+    monkeypatch.setenv("COSYVOICE_PROMPT_DIR", str(prompt_dir))
+    monkeypatch.setattr(server, "_get_runtime", lambda version: (FakeRuntime(), []))
+    request = _request()
+    request.voice_id = "missing_voice"
+
+    response = server.tts(request)
+
+    assert response.status_code == 400
+    assert b'"ok": false' in response.body
+    assert b"missing_voice.wav" in response.body
+    assert b"missing_voice.txt" in response.body

@@ -33,6 +33,7 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 9880
 DEFAULT_OUTPUT_PATH = "~/sylphos_outputs/tts/latest_tts.wav"
+DEFAULT_PROMPT_DIR = "/home/shakamilo/sylphos_services/cosyvoice3/prompts"
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
 VALID_MODEL_VERSIONS = {"base", "rl"}
@@ -102,12 +103,24 @@ def _default_output_path() -> Path:
     return Path(DEFAULT_OUTPUT_PATH).expanduser()
 
 
-def _default_prompt_wav_path() -> Path:
+def _built_in_prompt_wav_path() -> Path:
     return Path(_cosyvoice_repo()).expanduser() / "asset" / "zero_shot_prompt.wav"
+
+
+def _default_prompt_wav_path() -> Path:
+    return Path(_env("COSYVOICE_PROMPT_WAV", str(_built_in_prompt_wav_path()))).expanduser()
 
 
 def _default_prompt_text() -> str:
     return _env("COSYVOICE_PROMPT_TEXT", DEFAULT_PROMPT_TEXT)
+
+
+def _prompt_dir() -> Path:
+    return Path(_env("COSYVOICE_PROMPT_DIR", DEFAULT_PROMPT_DIR)).expanduser()
+
+
+class BadRequestError(ValueError):
+    """Raised when a TTS request has invalid prompt/voice configuration."""
 
 
 def _format_synthesis_error(exc: Exception) -> str:
@@ -166,6 +179,7 @@ class TTSRequest(BaseModel):
     prompt_wav: str | None = Field(default=None, description="Optional zero-shot prompt WAV path.")
     prompt_text: str | None = Field(default=None, description="Text transcript for prompt_wav.")
     speaker: str | None = Field(default=None, description="Optional speaker/voice name for SFT-capable models.")
+    voice_id: str | None = Field(default=None, description="Optional zero-shot voice id resolved from COSYVOICE_PROMPT_DIR.")
     model_version: str = Field(default="base", description="CosyVoice3 model version: 'base' or 'rl'.")
 
 
@@ -382,6 +396,8 @@ def _health_payload() -> dict[str, Any]:
     if not base_preflight_errors:
         runtime, load_errors = _get_runtime("base")
     loaded = runtime is not None
+    default_prompt_wav = _default_prompt_wav_path()
+    prompt_dir = _prompt_dir()
     return {
         "ok": loaded,
         "service": SERVICE_NAME,
@@ -392,6 +408,11 @@ def _health_payload() -> dict[str, Any]:
         "python": sys.version.split()[0],
         "cosyvoice_importable": _cosyvoice_importable(),
         "cosyvoice_loaded": loaded,
+        "default_prompt_wav": str(default_prompt_wav),
+        "default_prompt_wav_exists": default_prompt_wav.is_file(),
+        "prompt_dir": str(prompt_dir),
+        "prompt_dir_exists": prompt_dir.is_dir(),
+        "prompt_text_configured": bool(_default_prompt_text()),
         "errors": load_errors,
     }
 
@@ -403,6 +424,39 @@ app = FastAPI(title="Sylphos CosyVoice3 TTS Service", version="1.0.0")
 def health() -> dict[str, Any]:
     return _health_payload()
 
+
+
+def _resolve_prompt_config(request: TTSRequest) -> tuple[str, str]:
+    request_prompt_wav = (request.prompt_wav or "").strip() if request.prompt_wav is not None else ""
+    request_prompt_text = request.prompt_text if request.prompt_text is not None else None
+
+    # Explicit prompt_wav/prompt_text fields have the highest priority. If one
+    # side is omitted, fill it from the configured default rather than voice_id.
+    if request_prompt_wav or request_prompt_text is not None:
+        prompt_wav = request_prompt_wav or str(_default_prompt_wav_path())
+        prompt_text = request_prompt_text if request_prompt_text is not None else _default_prompt_text()
+        return prompt_wav, prompt_text
+
+    voice_id = (request.voice_id or "").strip() if getattr(request, "voice_id", None) is not None else ""
+    if voice_id:
+        if "/" in voice_id or "\\" in voice_id or voice_id in {".", ".."}:
+            raise BadRequestError("voice_id must be a simple file stem such as 'female_01'.")
+        prompt_dir = _prompt_dir()
+        prompt_wav_path = prompt_dir / f"{voice_id}.wav"
+        prompt_text_path = prompt_dir / f"{voice_id}.txt"
+        missing: list[str] = []
+        if not prompt_wav_path.is_file():
+            missing.append(str(prompt_wav_path))
+        if not prompt_text_path.is_file():
+            missing.append(str(prompt_text_path))
+        if missing:
+            raise BadRequestError(f"voice_id {voice_id!r} is missing prompt file(s): {', '.join(missing)}")
+        prompt_text = prompt_text_path.read_text(encoding="utf-8").strip()
+        if not prompt_text:
+            raise BadRequestError(f"voice_id {voice_id!r} prompt text file is empty: {prompt_text_path}")
+        return str(prompt_wav_path), prompt_text
+
+    return str(_default_prompt_wav_path()), _default_prompt_text()
 
 def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
     started = time.perf_counter()
@@ -426,15 +480,29 @@ def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
                 "elapsed_seconds": round(time.perf_counter() - started, 3),
                 "errors": errors,
             }, output_path
+        prompt_wav, prompt_text = _resolve_prompt_config(request)
         runtime_loaded = True
         output_path.parent.mkdir(parents=True, exist_ok=True)
         runtime.synthesize_to_file(
             request.text,
             output_path,
-            prompt_wav=request.prompt_wav,
-            prompt_text=request.prompt_text,
+            prompt_wav=prompt_wav,
+            prompt_text=prompt_text,
             speaker=request.speaker,
         )
+    except BadRequestError as exc:
+        errors.append(str(exc))
+        return {
+            "ok": False,
+            "error": errors[0],
+            "cosyvoice_loaded": runtime_loaded,
+            "model_version": version,
+            "model_path": _model_path_for_version(version) if version in VALID_MODEL_VERSIONS else "",
+            "output_path": str(output_path),
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "status_code": 400,
+            "errors": errors,
+        }, output_path
     except Exception as exc:
         errors.append(_format_synthesis_error(exc))
 
@@ -453,10 +521,19 @@ def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
     return payload, output_path
 
 
+def _error_status_code(payload: dict[str, Any]) -> int:
+    return int(payload.get("status_code") or (503 if payload.get("cosyvoice_loaded") is False else 500))
+
+
 @app.post("/tts")
-def tts(request: TTSRequest) -> dict[str, Any]:
+def tts(request: TTSRequest) -> Response:
     payload, _ = _synthesize_request(request)
-    return payload
+    status_code = 200 if payload.get("ok") else _error_status_code(payload)
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 
 @app.post("/v1/tts")
@@ -480,7 +557,7 @@ def tts_v1(request: TTSRequest) -> Response:
             media_type="application/json",
         )
 
-    status_code = 503 if payload.get("cosyvoice_loaded") is False else 500
+    status_code = _error_status_code(payload)
     return Response(
         content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         status_code=status_code,

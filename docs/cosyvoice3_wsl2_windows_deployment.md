@@ -563,6 +563,7 @@ python cosyvoice_server.py
    - `model_version`：可选，`base` 或 `rl`，默认 `base`。
    - `output_path`：可选，WSL2/Linux 内的 WAV 输出路径；未提供时默认写入 `~/sylphos_outputs/tts/latest_tts.wav`。
    - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本；不传时使用服务默认值。
+   - `voice_id`：可选，按 `{COSYVOICE_PROMPT_DIR}/{voice_id}.wav` 和 `{COSYVOICE_PROMPT_DIR}/{voice_id}.txt` 选择预置音色。
    - `speaker`：可选说话人/音色名；只有明确需要 SFT / speaker 模式时才传，默认测试不使用 `speaker="中文女"`。
 4. 通过 `COSYVOICE_REPO` 指向本地 CosyVoice 官方仓库源码，并在启动时自动加入：
    - `/home/shakamilo/CosyVoice`
@@ -581,8 +582,9 @@ COSYVOICE_REPO=~/CosyVoice
 COSYVOICE_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
 COSYVOICE_RL_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 COSYVOICE_DEVICE=cuda
-# 默认 zero-shot prompt_wav 为 COSYVOICE_REPO/asset/zero_shot_prompt.wav
-# 默认 prompt_text 为：You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
+COSYVOICE_PROMPT_WAV=~/CosyVoice/asset/zero_shot_prompt.wav
+COSYVOICE_PROMPT_TEXT=You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
+COSYVOICE_PROMPT_DIR=/home/shakamilo/sylphos_services/cosyvoice3/prompts
 COSYVOICE_HOST=0.0.0.0
 COSYVOICE_PORT=9880
 ```
@@ -598,7 +600,30 @@ export COSYVOICE_DEVICE=cuda
 
 > 注意：`AutoModel` 对目录名识别较敏感。不要把 `pretrained_models/base` 或 `pretrained_models/rl` 这类简化软链接直接传给服务端；应传入包含模型名的真实目录，例如 `Fun-CosyVoice3-0.5B` 或 `Fun-CosyVoice3-0.5B-rl`。
 
-默认测试链路使用 CosyVoice3 zero-shot 模式，不使用 `speaker="中文女"`。服务默认参考音频是 `COSYVOICE_REPO/asset/zero_shot_prompt.wav`，例如 `/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav`；默认 `prompt_text` 是：`You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。`。如果请求体显式传入 `prompt_wav` 或 `prompt_text`，会覆盖这些默认值。
+默认测试链路使用 CosyVoice3 zero-shot 模式，不使用 `speaker="中文女"`。服务默认参考音频是 `COSYVOICE_PROMPT_WAV`；未设置时回退到 `COSYVOICE_REPO/asset/zero_shot_prompt.wav`，例如 `/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav`。默认 `prompt_text` 来自 `COSYVOICE_PROMPT_TEXT`；未设置时使用：`You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。`。
+
+环境变量只是服务启动时的默认音色配置；修改 `COSYVOICE_PROMPT_WAV`、`COSYVOICE_PROMPT_TEXT` 或 `COSYVOICE_PROMPT_DIR` 后需要重启 FastAPI 服务才会成为新的默认值。临时换发声人不需要重启服务，可以在 `/tts` 或 `/v1/tts` 请求体中直接传 `prompt_wav` / `prompt_text`，这些请求字段优先级最高。
+
+zero-shot prompt 优先级为：
+
+1. 请求体中的 `prompt_wav` / `prompt_text`。
+2. 请求体中的 `voice_id`，解析到 `COSYVOICE_PROMPT_DIR` 下同名 `.wav` 和 `.txt`。
+3. 环境变量 `COSYVOICE_PROMPT_WAV` / `COSYVOICE_PROMPT_TEXT`。
+4. 内置默认 `{COSYVOICE_REPO}/asset/zero_shot_prompt.wav` 和默认 prompt text。
+
+建议把多个音色放在：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3/prompts
+├── female_01.wav
+├── female_01.txt
+├── male_01.wav
+└── male_01.txt
+```
+
+然后请求中可以使用 `"voice_id": "female_01"` 来选择 `/home/shakamilo/sylphos_services/cosyvoice3/prompts/female_01.wav` 与同名 `.txt`。如果同名 `.wav` 或 `.txt` 缺失，服务会返回 HTTP 400，并指出缺少哪个文件。
+
+`prompt_text` 必须和 `prompt_wav` 里实际说的话完全一致。参考音频建议 3-10 秒、单人、安静、无背景音乐、语速自然。
 
 ### 9.4 启动 FastAPI 服务
 
@@ -664,6 +689,11 @@ curl http://127.0.0.1:9880/health
   "python": "3.10.20",
   "cosyvoice_importable": true,
   "cosyvoice_loaded": true,
+  "default_prompt_wav": "/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav",
+  "default_prompt_wav_exists": true,
+  "prompt_dir": "/home/shakamilo/sylphos_services/cosyvoice3/prompts",
+  "prompt_dir_exists": true,
+  "prompt_text_configured": true,
   "errors": []
 }
 ```
@@ -750,6 +780,32 @@ Windows Sylphos 端通过 HTTP POST 调用 `/v1/tts`。
 | --- | --- | --- |
 | `text` | string | 待合成语音的文本 |
 | `model_version` | string | 模型版本，可选 `base` 或 `rl` |
+| `prompt_wav` | string | 可选；临时 zero-shot 参考音频路径，优先级高于默认音色和 `voice_id` |
+| `prompt_text` | string | 可选；必须与 `prompt_wav` 中实际说的话完全一致 |
+| `voice_id` | string | 可选；例如 `female_01`，自动使用 `COSYVOICE_PROMPT_DIR/female_01.wav` 和 `.txt` |
+
+临时切换发声人时，可以直接传 prompt：
+
+```json
+{
+  "text": "你好，我正在临时切换音色。",
+  "model_version": "base",
+  "prompt_wav": "/home/shakamilo/sylphos_services/cosyvoice3/prompts/female_01.wav",
+  "prompt_text": "female_01.wav 中实际说的话"
+}
+```
+
+也可以使用预置 `voice_id`：
+
+```json
+{
+  "text": "你好，我正在使用 female_01 音色。",
+  "model_version": "base",
+  "voice_id": "female_01"
+}
+```
+
+Windows 端 `TTSClient.speak(..., **extra_payload)` 已经会透传额外字段，因此可以传入 `voice_id`、`prompt_wav` 或 `prompt_text`，不需要修改 `/v1/tts` 协议。
 
 ### 10.3 响应处理流程
 
