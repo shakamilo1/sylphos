@@ -19,6 +19,7 @@ from urllib import error, parse, request
 
 _DEFAULT_TTS_URL = "http://127.0.0.1:9880/v1/tts"
 _VALID_MODEL_VERSIONS = {"base", "rl"}
+_VALID_PLAY_BACKENDS = {"auto", "winsound", "default_app"}
 
 
 class TTSClient:
@@ -31,15 +32,17 @@ class TTSClient:
         timeout_seconds: float = 60.0,
         temp_dir: str | Path | None = None,
         auto_play: bool = True,
+        play_backend: str = "auto",
     ) -> None:
         self.api_url = api_url
         self.model_version = self._normalize_model_version(model_version)
         self.timeout_seconds = timeout_seconds
         self.temp_dir = Path(temp_dir) if temp_dir is not None else Path(tempfile.gettempdir()) / "sylphos_tts"
         self.auto_play = auto_play
+        self.play_backend = self._normalize_play_backend(play_backend)
 
     def speak(self, text: str, model_version: str | None = None, **extra_payload: Any) -> Path | None:
-        """Synthesize text to a temporary WAV file and play it with the default player."""
+        """Synthesize text to a temporary WAV file and optionally play it."""
         try:
             wav_path = self.synthesize_to_temp_file(text, model_version=model_version, **extra_payload)
             if self.auto_play:
@@ -84,11 +87,43 @@ class TTSClient:
         return output
 
     def play(self, wav_path: str | Path) -> None:
-        """Play a WAV file with the operating system's default application."""
+        """Play a WAV file using the configured playback backend."""
         path = Path(wav_path).expanduser().resolve()
         if not path.exists():
             raise FileNotFoundError(f"WAV file does not exist: {path}")
 
+        if self.play_backend == "default_app":
+            self._play_with_default_app(path)
+            return
+
+        if self.play_backend == "winsound":
+            self._play_with_winsound(path)
+            return
+
+        if platform.system() == "Windows":
+            try:
+                self._play_with_winsound(path)
+                return
+            except Exception as exc:
+                print(
+                    f"[Sylphos TTS] winsound playback failed, falling back to default player: {exc}",
+                    file=sys.stderr,
+                )
+                self._play_with_default_app(path)
+                return
+
+        self._play_with_default_app(path)
+
+    def _play_with_winsound(self, path: Path) -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("winsound playback is only available on Windows; use play_backend='default_app'.")
+        try:
+            import winsound
+        except ImportError as exc:
+            raise RuntimeError("winsound module is not available in this Python environment.") from exc
+        winsound.PlaySound(str(path), winsound.SND_FILENAME)
+
+    def _play_with_default_app(self, path: Path) -> None:
         if platform.system() == "Windows":
             os.startfile(str(path))  # type: ignore[attr-defined]
             return
@@ -187,7 +222,20 @@ class TTSClient:
             raise ValueError("model_version must be 'base' or 'rl'.")
         return normalized
 
+    @staticmethod
+    def _normalize_play_backend(play_backend: str) -> str:
+        normalized = play_backend.strip().lower()
+        if normalized not in _VALID_PLAY_BACKENDS:
+            raise ValueError("play_backend must be 'auto', 'winsound', or 'default_app'.")
+        return normalized
 
-def speak(text: str, model_version: str = "base", api_url: str = _DEFAULT_TTS_URL, **extra_payload: Any) -> Path | None:
+
+def speak(
+    text: str,
+    model_version: str = "base",
+    api_url: str = _DEFAULT_TTS_URL,
+    play_backend: str = "auto",
+    **extra_payload: Any,
+) -> Path | None:
     """Convenience function for one-shot TTS synthesis and playback."""
-    return TTSClient(api_url=api_url, model_version=model_version).speak(text, **extra_payload)
+    return TTSClient(api_url=api_url, model_version=model_version, play_backend=play_backend).speak(text, **extra_payload)

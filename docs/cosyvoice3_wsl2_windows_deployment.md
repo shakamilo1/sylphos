@@ -557,55 +557,94 @@ python cosyvoice_server.py
 仓库模板 `services/cosyvoice3/cosyvoice_server.py` 已包含以下能力：
 
 1. 提供健康检查接口：`GET /health`。
-2. 提供语音合成接口：`POST /tts`，并保留 `POST /v1/tts` 作为 Windows 端现有客户端兼容别名。
+2. 提供语音合成接口：`POST /tts`，并保留 `POST /v1/tts` 作为 Windows 端现有客户端兼容别名。`/v1/tts` 推荐直接返回 `audio/wav` 二进制数据，避免 Windows 端依赖 WSL2 内部文件路径。
 3. 接收请求参数：
    - `text`：需要合成的文本。
+   - `model_version`：可选，`base` 或 `rl`，默认 `base`。
    - `output_path`：可选，WSL2/Linux 内的 WAV 输出路径；未提供时默认写入 `~/sylphos_outputs/tts/latest_tts.wav`。
-   - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本。
-   - `speaker`：可选说话人/音色名。
-4. 通过 `COSYVOICE_MODEL_PATH` 和 `COSYVOICE_DEVICE` 选择模型目录与设备。
-5. 优先复用 Sylphos 的 `CosyVoiceEngine`，在复制到服务目录且无法导入 Sylphos 包时回退到最小 CosyVoice 直接封装。
-6. 调用 CosyVoice3 生成 WAV 音频，并以 JSON 返回 `ok`、`output_path`、`elapsed_seconds` 和 `errors`。
-7. 在缺少 `cosyvoice` 包、模型加载失败或合成失败时返回明确错误信息，不在服务导入阶段崩溃。
+   - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本；不传时使用服务默认值。
+   - `voice_id`：可选，按 `{COSYVOICE_PROMPT_DIR}/{voice_id}.wav` 和 `{COSYVOICE_PROMPT_DIR}/{voice_id}.txt` 选择预置音色。
+   - `speaker`：可选说话人/音色名；只有明确需要 SFT / speaker 模式时才传，默认测试不使用 `speaker="中文女"`。
+4. 通过 `COSYVOICE_REPO` 指向本地 CosyVoice 官方仓库源码，并在启动时自动加入：
+   - `/home/shakamilo/CosyVoice`
+   - `/home/shakamilo/CosyVoice/third_party/Matcha-TTS`
+5. 通过 `COSYVOICE_MODEL_PATH`、`COSYVOICE_RL_MODEL_PATH` 和 `COSYVOICE_DEVICE` 选择 Base / RL 模型目录与设备。
+6. 直接从官方仓库导入 `from cosyvoice.cli.cosyvoice import AutoModel`，不要求 CosyVoice 已经通过 `pip install` 安装到 site-packages。
+7. 默认通过 `inference_zero_shot` 调用 CosyVoice3 生成 WAV 音频；`/tts` 会以 JSON 返回 `wav_base64` 以便兼容调试和旧式调用，`/v1/tts` 会返回 `audio/wav`。
+8. 在缺少 `cosyvoice` 源码、模型路径不存在、模型加载失败或合成失败时返回明确错误信息，不在服务导入阶段崩溃。
 
 ### 9.3 推荐服务配置项
 
-`cosyvoice_server.py` 支持以下环境变量；默认值适合 WSL2 Ubuntu，可按实际模型目录调整：
+`cosyvoice_server.py` 支持以下环境变量；默认值面向已经跑通的 WSL2 Ubuntu 部署路径：
 
 ```text
-COSYVOICE_MODEL_PATH=~/sylphos_models/Fun-CosyVoice3-0.5B
+COSYVOICE_REPO=~/CosyVoice
+COSYVOICE_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+COSYVOICE_RL_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 COSYVOICE_DEVICE=cuda
+COSYVOICE_PROMPT_WAV=~/CosyVoice/asset/zero_shot_prompt.wav
+COSYVOICE_PROMPT_TEXT=You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
+COSYVOICE_PROMPT_DIR=/home/shakamilo/sylphos_services/cosyvoice3/prompts
 COSYVOICE_HOST=0.0.0.0
 COSYVOICE_PORT=9880
 ```
 
-如果模型仍放在本部署文档前文的服务目录下，可以这样启动：
+如果模型放在服务目录下，也可以显式覆盖：
 
 ```bash
-export COSYVOICE_MODEL_PATH=~/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+export COSYVOICE_REPO=/home/shakamilo/CosyVoice
+export COSYVOICE_MODEL_PATH=/home/shakamilo/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+export COSYVOICE_RL_MODEL_PATH=/home/shakamilo/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-rl
 export COSYVOICE_DEVICE=cuda
 ```
 
+> 注意：`AutoModel` 对目录名识别较敏感。不要把 `pretrained_models/base` 或 `pretrained_models/rl` 这类简化软链接直接传给服务端；应传入包含模型名的真实目录，例如 `Fun-CosyVoice3-0.5B` 或 `Fun-CosyVoice3-0.5B-rl`。
+
+默认测试链路使用 CosyVoice3 zero-shot 模式，不使用 `speaker="中文女"`。服务默认参考音频是 `COSYVOICE_PROMPT_WAV`；未设置时回退到 `COSYVOICE_REPO/asset/zero_shot_prompt.wav`，例如 `/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav`。默认 `prompt_text` 来自 `COSYVOICE_PROMPT_TEXT`；未设置时使用：`You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。`。
+
+环境变量只是服务启动时的默认音色配置；修改 `COSYVOICE_PROMPT_WAV`、`COSYVOICE_PROMPT_TEXT` 或 `COSYVOICE_PROMPT_DIR` 后需要重启 FastAPI 服务才会成为新的默认值。临时换发声人不需要重启服务，可以在 `/tts` 或 `/v1/tts` 请求体中直接传 `prompt_wav` / `prompt_text`，这些请求字段优先级最高。
+
+zero-shot prompt 优先级为：
+
+1. 请求体中的 `prompt_wav` / `prompt_text`。
+2. 请求体中的 `voice_id`，解析到 `COSYVOICE_PROMPT_DIR` 下同名 `.wav` 和 `.txt`。
+3. 环境变量 `COSYVOICE_PROMPT_WAV` / `COSYVOICE_PROMPT_TEXT`。
+4. 内置默认 `{COSYVOICE_REPO}/asset/zero_shot_prompt.wav` 和默认 prompt text。
+
+建议把多个音色放在：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3/prompts
+├── female_01.wav
+├── female_01.txt
+├── male_01.wav
+└── male_01.txt
+```
+
+然后请求中可以使用 `"voice_id": "female_01"` 来选择 `/home/shakamilo/sylphos_services/cosyvoice3/prompts/female_01.wav` 与同名 `.txt`。如果同名 `.wav` 或 `.txt` 缺失，服务会返回 HTTP 400，并指出缺少哪个文件。
+
+`prompt_text` 必须和 `prompt_wav` 里实际说的话完全一致。参考音频建议 3-10 秒、单人、安静、无背景音乐、语速自然。
+
 ### 9.4 启动 FastAPI 服务
 
-进入服务目录并激活 Conda 环境：
+推荐启动方式如下：
 
 ```bash
-cd ~/sylphos_services/cosyvoice3
+cd /home/shakamilo/sylphos_services/cosyvoice3
 conda activate cosyvoice3
+COSYVOICE_REPO=/home/shakamilo/CosyVoice \
+COSYVOICE_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B \
+COSYVOICE_RL_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl \
+uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
-启动服务（二选一）：
-
-```bash
-python cosyvoice_server.py
-```
-
-或：
+如果已经进入 `/home/shakamilo/sylphos_services/cosyvoice3`，且使用默认路径，也可以简化为：
 
 ```bash
 uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
+
+也支持在任意目录启动，只要显式设置 `COSYVOICE_REPO`、`COSYVOICE_MODEL_PATH` 和 `COSYVOICE_RL_MODEL_PATH`，并使用可导入到 `cosyvoice_server.py` 的启动方式。
 
 参数说明：
 
@@ -620,9 +659,11 @@ uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```ini
 [Service]
 WorkingDirectory=/home/<user>/sylphos_services/cosyvoice3
-Environment=COSYVOICE_MODEL_PATH=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+Environment=COSYVOICE_REPO=/home/<user>/CosyVoice
+Environment=COSYVOICE_MODEL_PATH=/home/<user>/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+Environment=COSYVOICE_RL_MODEL_PATH=/home/<user>/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 Environment=COSYVOICE_DEVICE=cuda
-ExecStart=/home/<user>/miniconda3/envs/cosyvoice3/bin/python /home/<user>/sylphos_services/cosyvoice3/cosyvoice_server.py
+ExecStart=/home/<user>/miniconda3/envs/cosyvoice3/bin/uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
 如果选择直接从仓库运行，则将 `WorkingDirectory` 和 `ExecStart` 改为仓库中的 `services/cosyvoice3/cosyvoice_server.py`。
@@ -641,36 +682,46 @@ curl http://127.0.0.1:9880/health
 {
   "ok": true,
   "service": "cosyvoice3",
-  "model_path": "/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B",
+  "cosyvoice_repo": "/home/shakamilo/CosyVoice",
+  "model_path": "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B",
+  "rl_model_path": "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl",
   "device": "cuda",
-  "python": "3.10.14",
+  "python": "3.10.20",
+  "cosyvoice_importable": true,
   "cosyvoice_loaded": true,
+  "default_prompt_wav": "/home/shakamilo/CosyVoice/asset/zero_shot_prompt.wav",
+  "default_prompt_wav_exists": true,
+  "prompt_dir": "/home/shakamilo/sylphos_services/cosyvoice3/prompts",
+  "prompt_dir_exists": true,
+  "prompt_text_configured": true,
   "errors": []
 }
 ```
 
-如果健康检查失败，应优先检查：
+如果 `/health` 返回 `cosyvoice_loaded=false` 且错误包含 `CosyVoice package is not importable`，通常说明 FastAPI 服务进程没有把 `/home/shakamilo/CosyVoice` 加入 `PYTHONPATH` / `sys.path`。此时优先检查：
 
-1. Conda 环境是否已激活。
-2. `uvicorn` 是否安装。
-3. `cosyvoice_server.py` 是否位于当前目录，或 systemd `ExecStart` 是否指向实际存在的文件。
-4. 模型路径是否配置正确。
-5. CUDA / PyTorch 是否可用。
-6. 端口 `9880` 是否被其他程序占用。
+1. `COSYVOICE_REPO` 是否指向官方仓库源码，例如 `/home/shakamilo/CosyVoice`。
+2. `/home/shakamilo/CosyVoice/cosyvoice/cli/cosyvoice.py` 是否存在。
+3. `/health` 返回的错误中打印的当前 `sys.path` 是否包含 `/home/shakamilo/CosyVoice` 和 `/home/shakamilo/CosyVoice/third_party/Matcha-TTS`。
+4. `COSYVOICE_MODEL_PATH` 是否指向真实模型目录 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`，而不是旧的 `/home/shakamilo/sylphos_models/Fun-CosyVoice3-0.5B`。
+5. Conda 环境、`uvicorn`、CUDA / PyTorch 和端口 `9880` 是否正常。
+
+如果在 `/home/shakamilo/CosyVoice` 里直接运行最小推理脚本可以成功生成 WAV，但 FastAPI `/health` 失败，优先检查 `COSYVOICE_REPO`、`PYTHONPATH` / `sys.path` 和 `model_path`，不要先怀疑 GPU、模型或 PyTorch。
 
 ### 9.6 在 WSL2 中测试 TTS 接口
 
 可以使用 curl 发送一次 TTS 请求：
 
 ```bash
-curl -X POST http://127.0.0.1:9880/tts \
+curl --fail -X POST http://127.0.0.1:9880/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我是 Sylphos。","output_path":"/tmp/sylphos_tts_test.wav","prompt_wav":null,"prompt_text":null}'
+  -d '{"text":"你好，我是 Sylphos。","model_version":"base"}'
 
-# 兼容 Windows 端现有客户端，也可以调用：
-curl -X POST http://127.0.0.1:9880/v1/tts \
+# Windows 端现有客户端调用的是 /v1/tts：
+curl --fail -X POST http://127.0.0.1:9880/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我是 Sylphos。","output_path":"/tmp/sylphos_tts_test.wav"}'
+  -d '{"text":"你好，我是 Sylphos。","model_version":"base"}' \
+  --output /tmp/sylphos_tts_test.wav
 ```
 
 检查输出文件：
@@ -679,15 +730,24 @@ curl -X POST http://127.0.0.1:9880/v1/tts \
 file /tmp/sylphos_tts_test.wav
 ```
 
-如果 JSON 返回 `ok: true` 且 `output_path` 指向的文件存在，说明 `/tts` 接口可用；`/v1/tts` 是兼容别名。
+如果 JSON 返回 `ok: true` 且 `output_path` 指向的文件存在，说明 `/tts` 接口可用。
 
-测试兼容接口：
+测试 Windows 端实际使用的 `/v1/tts` 二进制 WAV 接口时，建议加上 `--fail` 并同时记录 HTTP 状态码，避免失败 JSON 被保存成 `.wav`：
 
 ```bash
-curl -X POST http://127.0.0.1:9880/v1/tts \
+curl --fail -sS -X POST http://127.0.0.1:9880/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"你好，我正在使用兼容接口。","output_path":"/tmp/sylphos_tts_test_v1.wav"}'
+  -d '{"text":"你好，我正在使用兼容接口。","model_version":"base"}' \
+  --output /tmp/sylphos_tts_test_v1.wav \
+  --write-out '\nHTTP %{http_code}\n'
+file /tmp/sylphos_tts_test_v1.wav
 ```
+
+`/v1/tts` 的预期行为是：成功时返回 `HTTP 200`、`Content-Type: audio/wav`，保存出来的文件应被 `file` 识别为 `RIFF/WAVE`、`audio/x-wav` 或类似 WAV 类型。
+
+如果执行 `curl --output xxx.wav` 后，`file xxx.wav` 显示 `JSON text data`，说明服务端返回的是错误 JSON，不是音频。此时不要播放该文件，应先查看 HTTP 状态码和 JSON 的 `error` / `errors` 字段：模型未加载或导入失败通常会返回 `503 Service Unavailable`，合成过程中异常通常会返回 `500 Internal Server Error`。可以临时去掉 `--output`，或另存为 `.json` 查看 `error` 字段。
+
+长文本可能会被 CosyVoice 在内部自动分段生成，服务端会完整消费 `inference_zero_shot` / speaker 推理接口返回的 generator，并把所有 `tts_speech` 片段按时间顺序拼接成一个 WAV 后再返回。生产使用中，超长文本仍建议 Sylphos 上层按句子或自然段切分，以便控制延迟、进度和打断；但服务端本身应能返回一次请求的完整合成结果。测试长文本时，除了检查 HTTP 200 和 WAV 文件类型，也要实际确认最后一句已经播放出来，避免只听到第一个生成片段。
 
 ---
 
@@ -722,6 +782,32 @@ Windows Sylphos 端通过 HTTP POST 调用 `/v1/tts`。
 | --- | --- | --- |
 | `text` | string | 待合成语音的文本 |
 | `model_version` | string | 模型版本，可选 `base` 或 `rl` |
+| `prompt_wav` | string | 可选；临时 zero-shot 参考音频路径，优先级高于默认音色和 `voice_id` |
+| `prompt_text` | string | 可选；必须与 `prompt_wav` 中实际说的话完全一致 |
+| `voice_id` | string | 可选；例如 `female_01`，自动使用 `COSYVOICE_PROMPT_DIR/female_01.wav` 和 `.txt` |
+
+临时切换发声人时，可以直接传 prompt：
+
+```json
+{
+  "text": "你好，我正在临时切换音色。",
+  "model_version": "base",
+  "prompt_wav": "/home/shakamilo/sylphos_services/cosyvoice3/prompts/female_01.wav",
+  "prompt_text": "female_01.wav 中实际说的话"
+}
+```
+
+也可以使用预置 `voice_id`：
+
+```json
+{
+  "text": "你好，我正在使用 female_01 音色。",
+  "model_version": "base",
+  "voice_id": "female_01"
+}
+```
+
+Windows 端 `TTSClient.speak(..., **extra_payload)` 已经会透传额外字段，因此可以传入 `voice_id`、`prompt_wav` 或 `prompt_text`，不需要修改 `/v1/tts` 协议。
 
 ### 10.3 响应处理流程
 
@@ -737,9 +823,10 @@ Windows Sylphos 端推荐按以下流程处理响应：
 %TEMP%\sylphos_tts\
 ```
 
-6. 调用 Windows 默认播放器打开 WAV 文件。
-7. 每次合成生成新的文件名，避免多次调用时覆盖上一段语音。
-8. 如果接口失败、网络异常或返回内容不是有效音频，应在 Sylphos 日志或界面中输出错误信息。
+6. 在 Windows 端默认使用 `winsound` 后台播放 WAV，像语音助手一样直接从音箱播放，不弹出播放器窗口。
+7. 如果 `winsound` 播放失败，`play_backend="auto"` 会自动回退到系统默认播放器。
+8. 每次合成生成新的文件名，避免多次调用时覆盖上一段语音。
+9. 如果接口失败、网络异常或返回内容不是有效音频，应在 Sylphos 日志或界面中输出错误信息。
 
 ### 10.4 Base / RL 模型选择
 
@@ -765,14 +852,33 @@ Windows Sylphos 端只需要通过请求参数选择模型版本：
 
 ### 10.5 Windows 端播放说明
 
-Windows 端拿到 WAV 文件后，可以使用系统默认播放器播放。推荐流程为：
+Windows 端拿到 WAV 文件后，`TTSClient(..., auto_play=True)` 默认使用 `play_backend="auto"`。在 Windows 上该模式会优先调用标准库 `winsound.PlaySound(..., winsound.SND_FILENAME)` 阻塞播放 WAV，因此正常情况下会直接从 Windows 音箱播放，不再弹出默认播放器窗口。
+
+推荐流程为：
 
 1. 将 WAV 内容写入临时文件。
 2. 确认文件存在且大小大于 0。
-3. 使用 Windows 默认关联程序打开 WAV。
-4. 多次调用时，每次生成独立文件名。
+3. Windows 上优先用 `winsound` 后台播放，保证语音播完。
+4. 如果 `winsound` 播放失败，自动回退到默认播放器打开 WAV，并在 stderr 中输出可读提示。
+5. macOS / Linux 仍保持原有 `open` / `xdg-open` fallback。
+6. 多次调用时，每次生成独立文件名。
 
-该方式不要求 Sylphos 内部实现复杂音频播放引擎，适合部署验证和早期集成。
+如果调试时希望显式打开系统默认播放器，可以创建客户端时设置：
+
+```python
+from sylphos.voice.tts import TTSClient
+
+client = TTSClient(auto_play=True, play_backend="default_app")
+client.speak("你好，我是 Sylphos。")
+```
+
+可选 `play_backend`：
+
+| 值 | 行为 |
+| --- | --- |
+| `auto` | 默认值；Windows 优先 `winsound`，失败后回退默认播放器；其他系统保持原有 fallback |
+| `winsound` | 强制使用 Windows `winsound` 播放；非 Windows 环境会给出清晰错误 |
+| `default_app` | 使用原来的默认播放器方案：Windows `os.startfile`、macOS `open`、Linux `xdg-open` |
 
 ---
 
@@ -888,37 +994,407 @@ http://172.xx.xx.xx:9880/health
 
 部署过程中可能出现 ONNX Runtime 相关警告。如果 PyTorch CUDA 推理已经成功，并且 WAV 能正常生成，此类警告通常可以暂时忽略。后续如需优化启动速度或推理性能，再单独处理 ONNX Runtime 配置。
 
+### 11.8 `/health` 中 `cosyvoice_importable=false`
+
+排查：
+
+1. 检查 `COSYVOICE_REPO` 是否指向 `/home/shakamilo/CosyVoice`。
+2. 检查 `/home/shakamilo/CosyVoice/cosyvoice/cli/cosyvoice.py` 是否存在。
+3. 查看 `/health` 错误中打印的 `sys.path` 是否包含 CosyVoice 仓库和 `third_party/Matcha-TTS`。
+
+### 11.9 `/health` 中 `cosyvoice_loaded=false`
+
+排查：
+
+1. 检查 `model_path` 是否存在。
+2. 检查模型目录名是否包含 `Fun-CosyVoice3-0.5B`。
+3. 不要把简化软链接 `base` / `rl` 直接传给 `AutoModel`。
+4. 检查 PyTorch / CUDA 是否可用。
+
+### 11.10 `CosyVoice3.__init__() got an unexpected keyword argument 'device'`
+
+不要把 `device` 参数传给 `AutoModel` 或 `CosyVoice3` 构造函数。`COSYVOICE_DEVICE` 目前只用于 `/health` 诊断和未来扩展。
+
+### 11.11 错误 `"'中文女'"`
+
+默认链路不应使用 `speaker="中文女"`。CosyVoice3 默认应走 zero-shot：`prompt_wav` + `prompt_text` + `inference_zero_shot`。`speaker` 只用于未来明确的 SFT / speaker 模式。
+
+### 11.12 保存出的 `.wav` 是 `JSON text data`
+
+这说明服务端返回的是错误 JSON，不是音频。使用 `curl --fail-with-body` 查看 HTTP 状态码和 JSON `error` / `errors` 字段。成功 WAV 应为 `RIFF/WAVE`。
+
+### 11.13 `422 Unprocessable Entity`
+
+通常表示请求 JSON 不符合 schema。检查：
+
+1. `text` 字段是否存在。
+2. PowerShell / curl 引号是否正确转义。
+3. 字段类型是否为 string，例如 `text`、`model_version`、`voice_id`、`prompt_wav`、`prompt_text`。
+
+### 11.14 `too short than prompt text` warning
+
+这是 CosyVoice 的质量警告，不是服务错误。它表示合成文本比 `prompt_text` 短，可能影响表现。可以忽略，或使用更短、更匹配的参考 prompt。
+
+### 11.15 `.ogg` 改名 `.wav` 也能用
+
+这通常是底层解码器根据文件头识别出了真实格式。不建议依赖此行为，推荐用 `ffmpeg` 转成真正 WAV：
+
+```bash
+ffmpeg -y -i input.ogg -ac 1 -ar 16000 output.wav
+# 或
+ffmpeg -y -i input.ogg -ac 1 -ar 24000 output.wav
+```
+
 ---
 
-## 12. 部署完成检查清单
 
-完成部署后，应逐项确认：
+## 12. PR #18 最终跑通流程与验收命令
 
-- [ ] Windows 已安装支持 WSL CUDA 的 NVIDIA 驱动。
-- [ ] Windows PowerShell 中 `nvidia-smi` 正常。
-- [ ] WSL2 Ubuntu 中 `nvidia-smi` 正常。
-- [ ] 已创建并激活 `cosyvoice3` Conda 环境。
-- [ ] PyTorch CUDA 测试通过。
-- [ ] 已克隆 `~/CosyVoice` 仓库。
-- [ ] 已安装 CosyVoice 运行依赖。
-- [ ] 已下载 `Fun-CosyVoice3-0.5B` 主模型目录，且 Base 版本直接使用该标准目录名。
-- [ ] 已下载 `CosyVoice-ttsfrd` 资源。
-- [ ] 已创建 `Fun-CosyVoice3-0.5B-rl` 目录，并通过 `cp llm.rl.pt llm.pt` 切换 RL 权重。
-- [ ] 已安装 ttsfrd wheel，推理日志中可看到 `use ttsfrd frontend`。
-- [ ] 已创建 `base`、`rl` 管理用软链接，但服务端实际 `model_dir` 使用标准模型目录名。
-- [ ] 本地最小推理可以生成 WAV。
-- [ ] 仓库中存在 `services/cosyvoice3/cosyvoice_server.py`，并已复制到 `~/sylphos_services/cosyvoice3/cosyvoice_server.py` 或确认直接从仓库路径运行。
-- [ ] `python cosyvoice_server.py` 或 `uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880` 可以正常启动。
-- [ ] WSL2 中 `curl http://127.0.0.1:9880/health` 正常。
-- [ ] WSL2 中 `/tts` 能生成 WAV，`/v1/tts` 兼容接口也可用。
-- [ ] Windows 端可以访问 `http://127.0.0.1:9880/health`。
-- [ ] Windows Sylphos 可以向 `/v1/tts` 发送文本和 `model_version`。
-- [ ] Windows Sylphos 可以保存并播放返回的 WAV 文件。
+本节记录 PR #18 在用户本机最终确认跑通的实际部署路径和验收命令。前文可作为详细背景，本节可作为合并前的标准操作清单。
+
+### 12.1 WSL2 Ubuntu 24.04 与 Conda 环境
+
+推荐环境：
+
+- WSL2 Ubuntu 24.04。
+- CosyVoice 官方仓库：`/home/shakamilo/CosyVoice`。
+- Sylphos CosyVoice3 服务目录：`/home/shakamilo/sylphos_services/cosyvoice3`。
+- Conda 环境名：`cosyvoice3`。
+- Python：3.10。
+- RTX 5080：使用 PyTorch `2.8.0` + CUDA `12.8`。
+
+创建并激活 Conda 环境：
+
+```bash
+conda create -n cosyvoice3 python=3.10 -y
+conda activate cosyvoice3
+```
+
+安装 CosyVoice requirements 后，如果 `torch`、`torchaudio`、`torchvision` 或 `triton` 被降级，应重新安装 CUDA 12.8 版本：
+
+```bash
+pip uninstall -y torch torchaudio torchvision triton
+pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+确认 CUDA 与矩阵运算可用：
+
+```bash
+python - <<'PY'
+import torch
+print(torch.__version__)
+print(torch.version.cuda)
+print(torch.cuda.is_available())
+print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
+x = torch.randn(1024, 1024, device="cuda")
+y = x @ x
+print("cuda matmul ok:", y.shape)
+PY
+```
+
+如果 `torch.cuda.is_available()` 为 `True` 且最后输出 `cuda matmul ok`，说明 PyTorch CUDA 基本可用。
+
+### 12.2 模型、RL 权重与 ttsfrd
+
+最终跑通的模型路径为：
+
+```text
+/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
+```
+
+推荐在 `/home/shakamilo/CosyVoice` 中使用 ModelScope 下载：
+
+```bash
+cd /home/shakamilo/CosyVoice
+python - <<'PY'
+from modelscope import snapshot_download
+snapshot_download("FunAudioLLM/Fun-CosyVoice3-0.5B-2512", local_dir="pretrained_models/Fun-CosyVoice3-0.5B")
+snapshot_download("iic/CosyVoice-ttsfrd", local_dir="pretrained_models/CosyVoice-ttsfrd")
+snapshot_download("iic/CosyVoice2-0.5B", local_dir="pretrained_models/CosyVoice2-0.5B")
+PY
+```
+
+`llm.rl.pt` 会随 CosyVoice3 主模型一起下载。RL 目录可以通过复制 Base 目录后将 `llm.rl.pt` 替换为 `llm.pt`：
+
+```bash
+cd /home/shakamilo/CosyVoice/pretrained_models
+cp -a Fun-CosyVoice3-0.5B Fun-CosyVoice3-0.5B-rl
+cd Fun-CosyVoice3-0.5B-rl
+cp -f llm.rl.pt llm.pt
+```
+
+`ttsfrd` 不只是下载资源，还需要安装 wheel：
+
+```bash
+cd /home/shakamilo/CosyVoice/pretrained_models/CosyVoice-ttsfrd
+unzip -o resource.zip -d .
+pip install ttsfrd_dependency-0.1-py3-none-any.whl
+pip install ttsfrd-0.4.2-cp310-cp310-linux_x86_64.whl
+```
+
+安装成功并被 CosyVoice 使用时，推理日志中可能出现：
+
+```text
+use ttsfrd frontend
+```
+
+### 12.3 最终推荐服务启动命令
+
+服务目录为：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3
+```
+
+推荐启动命令：
+
+```bash
+cd /home/shakamilo/sylphos_services/cosyvoice3
+conda activate cosyvoice3
+
+COSYVOICE_REPO=/home/shakamilo/CosyVoice \
+COSYVOICE_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B \
+COSYVOICE_RL_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl \
+COSYVOICE_PROMPT_DIR=/home/shakamilo/sylphos_services/cosyvoice3/prompts \
+uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
+```
+
+说明：
+
+1. `COSYVOICE_REPO` 用于把官方 CosyVoice 仓库加入 `sys.path`，因此不要求 CosyVoice 被 `pip install` 成 site-packages 包。
+2. `COSYVOICE_MODEL_PATH` 是 Base 模型目录，应指向 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`。
+3. `COSYVOICE_RL_MODEL_PATH` 是 RL 模型目录，应指向 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl`。
+4. `COSYVOICE_PROMPT_DIR` 是 `voice_id` 音色库目录。
+5. 服务监听 `0.0.0.0:9880`，Windows 端通常可通过 `http://127.0.0.1:9880` 访问。
+
+### 12.4 健康检查与字段含义
+
+在 WSL2 中执行：
+
+```bash
+curl http://127.0.0.1:9880/health
+```
+
+重点检查字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `ok` | 服务是否整体可用 |
+| `cosyvoice_repo` | 当前服务使用的 CosyVoice 官方仓库路径 |
+| `model_path` | Base 模型路径，不应指向旧的 `/home/shakamilo/sylphos_models/...` |
+| `rl_model_path` | RL 模型路径 |
+| `device` | 诊断字段，通常为 `cuda`；不会直接传给 `AutoModel` 构造函数 |
+| `python` | 服务进程 Python 版本 |
+| `cosyvoice_importable` | 是否能导入 `cosyvoice.cli.cosyvoice` |
+| `cosyvoice_loaded` | Base 模型是否已加载 |
+| `default_prompt_wav` | 当前默认 zero-shot prompt wav 路径 |
+| `default_prompt_wav_exists` | 默认 prompt wav 是否存在 |
+| `prompt_dir` | `voice_id` 音色库目录 |
+| `prompt_dir_exists` | 音色库目录是否存在 |
+| `errors` | 预检或加载错误 |
+
+排查要点：
+
+- `cosyvoice_importable=false` 通常表示 `COSYVOICE_REPO` 或 `sys.path` 有问题；检查 `/home/shakamilo/CosyVoice/cosyvoice/cli/cosyvoice.py` 是否存在。
+- `cosyvoice_loaded=false` 通常表示模型路径、模型加载或依赖问题。
+- `model_path` 应指向最终跑通路径 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`。
+- ONNX Runtime `libcudnn.so.8` 相关警告可以暂时忽略，只要 PyTorch CUDA 可用且 WAV 能生成。
+
+### 12.5 WSL2 端 `/v1/tts` 验收命令
+
+推荐使用 `--fail-with-body`，避免失败 JSON 被误当成 WAV：
+
+```bash
+curl --fail-with-body -w "
+HTTP_STATUS=%{http_code}
+CONTENT_TYPE=%{content_type}
+SIZE=%{size_download}
+TIME=%{time_total}
+" \
+-X POST http://127.0.0.1:9880/v1/tts \
+-H "Content-Type: application/json" \
+-d '{"text":"你好，我是 Sylphos。现在正在测试 CosyVoice 三服务。","model_version":"base"}' \
+--output /tmp/sylphos_tts_test.wav
+
+file /tmp/sylphos_tts_test.wav
+ls -lh /tmp/sylphos_tts_test.wav
+```
+
+成功时应看到：
+
+1. `HTTP_STATUS=200`。
+2. `CONTENT_TYPE` 为 `audio/wav`。
+3. `file /tmp/sylphos_tts_test.wav` 显示 `RIFF/WAVE`、`WAVE audio` 或类似 WAV 类型。
+4. 文件大小大于 0。
+
+如果 `file` 显示 `JSON text data`，说明服务端返回了错误 JSON，不是音频。失败时应查看 JSON 的 `error` / `errors` 字段。
+
+### 12.6 Windows 端 Sylphos 调用测试
+
+在 Windows PowerShell 中进入 Sylphos 仓库：
+
+```powershell
+cd H:\sylphos1\sylphos
+```
+
+Base 模型测试：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('主人，Sylphos 的本地语音合成服务已经连接成功。'); print(p)"
+```
+
+RL 模型测试：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='rl', timeout_seconds=240, auto_play=True).speak('你好，我是 Sylphos。现在正在测试 RL 版本语音模型。'); print(p)"
+```
+
+说明：
+
+1. `TTSClient` 默认调用 `http://127.0.0.1:9880/v1/tts`。
+2. `auto_play=True` 时 Windows 端优先使用 `winsound` 后台播放，不再默认弹出播放器窗口。
+3. 如果 `winsound` 失败，会 fallback 到 `default_app`。
+4. `speak()` 返回生成的临时 WAV 文件路径。
+5. 临时 WAV 通常位于：`C:\Users\shakamilo\AppData\Local\Temp\sylphos_tts\`。
+
+### 12.7 `voice_id` 音色切换
+
+音色库目录：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3/prompts
+```
+
+每个音色使用一对文件：
+
+```text
+Kerrigan.wav
+Kerrigan.txt
+
+official.wav
+official.txt
+```
+
+`voice_id="Kerrigan"` 会解析到：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3/prompts/Kerrigan.wav
+/home/shakamilo/sylphos_services/cosyvoice3/prompts/Kerrigan.txt
+```
+
+要求和建议：
+
+1. `.txt` 必须是 `.wav` 中实际说的话，尽量逐字一致。
+2. 参考音频建议 3-10 秒，单人、安静、无背景音乐、语速自然。
+3. 当前 `voice_id` 机制默认查找 `.wav` 和 `.txt` 文件。
+4. 即使某些 `.ogg` 改名 `.wav` 可能被底层解码器识别，也不建议长期依赖此行为。推荐使用 `ffmpeg` 转成真正 WAV：
+
+```bash
+ffmpeg -y -i input.ogg -ac 1 -ar 16000 Kerrigan.wav
+# 或
+ffmpeg -y -i input.ogg -ac 1 -ar 24000 Kerrigan.wav
+```
+
+Windows PowerShell 测试 Kerrigan 音色：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('你好，我正在使用 Kerrigan 音色。', voice_id='Kerrigan'); print(p)"
+```
+
+切回官方音色：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('你好，我现在切回官方默认音色。', voice_id='official'); print(p)"
+```
+
+临时换音色不需要重启服务，只要请求传不同 `voice_id` 即可。修改 `COSYVOICE_PROMPT_DIR` 环境变量本身需要重启服务。
+
+### 12.8 `prompt_wav` / `prompt_text` 临时覆盖
+
+除了 `voice_id`，也可以直接传 `prompt_wav` / `prompt_text`：
+
+```json
+{
+  "text": "你好，我正在测试临时音色。",
+  "model_version": "base",
+  "prompt_wav": "/home/shakamilo/sylphos_services/cosyvoice3/prompts/Kerrigan.wav",
+  "prompt_text": "这里写 Kerrigan.wav 中实际说的话"
+}
+```
+
+优先级：
+
+1. 请求体 `prompt_wav` / `prompt_text`。
+2. 请求体 `voice_id`。
+3. 环境变量 `COSYVOICE_PROMPT_WAV` / `COSYVOICE_PROMPT_TEXT`。
+4. 内置默认 `COSYVOICE_REPO/asset/zero_shot_prompt.wav` 和默认 prompt text。
+
+默认 `prompt_text`：
+
+```text
+You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
+```
+
+### 12.9 长文本测试与多段拼接
+
+CosyVoice 对长文本可能会内部分段，generator 会 yield 多个 `tts_speech` 片段。服务端现在会完整消费 generator，并拼接所有音频片段后返回完整 WAV。
+
+之前曾出现只播放到“汝之身托吾麾下”后截断的问题，原因是服务端只返回了第一段；现在已修复。上层 Sylphos 未来仍可以按句子做更细粒度分段，以便控制延迟、进度和打断，但服务端应能处理长文本并返回完整音频。
+
+Windows PowerShell 长文本测试：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=300, auto_play=True).speak('1.温柔正确的人总是难以生存，因为这世界既不温柔，也不正确。2.我是毁灭世界，然后创造世界的人。3.宣告，汝之身托吾麾下。吾之命运附汝剑上，响应圣杯之召唤，遵从这意志、道理者，回应我！4.倘若出生于东海的我是无名小卒的话，那么被我砍倒的你到底又是哪根地上的葱呢。', voice_id='Kerrigan'); print(p)"
+```
+
+测试时要听最后一句是否完整播放。如果只播放前半段，说明多段拼接逻辑有问题。
+
+### 12.10 当前已确认通过的能力
+
+用户本机已经确认：
+
+- 默认音色可用。
+- `voice_id='Kerrigan'` 可用。
+- Base 模型可用。
+- RL 模型可用。
+- 长文本多段生成拼接可用。
+- Windows 端 `auto_play=True` 可以通过音箱直接播放。
+- `/health`、`/v1/tts`、Windows `TTSClient` 端到端链路可用。
+
+## 13. 最终合并前检查清单
+
+合并 PR #18 前，按最终跑通路径逐项确认：
+
+- [ ] WSL2 服务可以启动。
+- [ ] `/health` 返回 `cosyvoice_importable=true`。
+- [ ] `/health` 返回 `cosyvoice_loaded=true`。
+- [ ] `/health` 中 `model_path` 指向 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`。
+- [ ] `/health` 中 `rl_model_path` 指向 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl`。
+- [ ] Base 模型 `/v1/tts` 返回 `audio/wav`。
+- [ ] RL 模型 `/v1/tts` 返回 `audio/wav`。
+- [ ] Windows `TTSClient` 可以播放 Base。
+- [ ] Windows `TTSClient` 可以播放 RL。
+- [ ] Windows 端 `auto_play=True` 直接通过音箱播放，不弹出默认播放器窗口。
+- [ ] `voice_id=Kerrigan` 测试通过。
+- [ ] `voice_id=official` 可以切回默认/官方音色。
+- [ ] 长文本最后一句完整播放。
+- [ ] 失败请求返回 JSON 和非 200 状态码。
+- [ ] 文档中的路径和实际路径一致。
+
+可选基础环境复核：
+
+- [ ] Windows 和 WSL2 中 `nvidia-smi` 正常。
+- [ ] `cosyvoice3` Conda 环境已创建并激活。
+- [ ] PyTorch `2.8.0` + CUDA `12.8` 测试通过。
+- [ ] `/home/shakamilo/CosyVoice` 官方仓库存在。
+- [ ] `CosyVoice-ttsfrd` wheel 已安装，日志可出现 `use ttsfrd frontend`。
+- [ ] `/home/shakamilo/sylphos_services/cosyvoice3/prompts` 中的音色 `.wav` / `.txt` 成对存在。
 
 ---
 
-## 13. 小结
+## 14. 小结
 
-通过以上步骤，CosyVoice3 被部署在 WSL2 Ubuntu 中，使用 Conda 管理 Python 3.10 环境，并通过 PyTorch CUDA 调用 GPU 完成语音合成。模型目录使用 `Fun-CosyVoice3-0.5B` 作为 Base 标准目录，并通过复制为 `Fun-CosyVoice3-0.5B-rl` 后替换 `llm.pt` 启用 RL 版本，便于服务端按请求参数切换。FastAPI 服务监听 `9880` 端口，Windows Sylphos 主程序通过 HTTP 调用 `/v1/tts`，传入文本与模型版本，接收生成音频后保存到 Windows 临时目录并调用默认播放器播放。
+通过以上步骤，CosyVoice3 被部署在 WSL2 Ubuntu 中，使用 Conda 管理 Python 3.10 环境，并通过 PyTorch CUDA 调用 GPU 完成语音合成。模型目录使用 `Fun-CosyVoice3-0.5B` 作为 Base 标准目录，并通过复制为 `Fun-CosyVoice3-0.5B-rl` 后替换 `llm.pt` 启用 RL 版本，便于服务端按请求参数切换。FastAPI 服务监听 `9880` 端口，Windows Sylphos 主程序通过 HTTP 调用 `/v1/tts`，传入文本与模型版本，接收生成音频后保存到 Windows 临时目录，并默认通过 `winsound` 在后台播放。
 
 该架构将高负载的语音合成推理放在 WSL2 GPU 环境中，将 Sylphos 主程序保留在 Windows 端运行，既便于利用本机 GPU 性能，也便于 Windows 桌面应用直接集成语音播放能力。

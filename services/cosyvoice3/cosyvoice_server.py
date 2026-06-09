@@ -3,14 +3,14 @@ from __future__ import annotations
 """FastAPI service template for running CosyVoice3 from WSL2.
 
 The script is intentionally self-contained enough to run either from this
-repository path or after being copied to ``~/sylphos_services/cosyvoice3``.  It
-prefers Sylphos' ``CosyVoiceEngine`` adapter when available, and falls back to a
-small direct CosyVoice wrapper when the Sylphos package is not importable from a
-copied deployment directory.
+repository path or after being copied to ``~/sylphos_services/cosyvoice3``. It
+loads CosyVoice from a local official source checkout instead of assuming the
+``cosyvoice`` package was installed into site-packages.
 """
 
 import base64
 import importlib
+import json
 import inspect
 import os
 import sys
@@ -22,30 +22,77 @@ from threading import Lock
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 SERVICE_NAME = "cosyvoice3"
-DEFAULT_MODEL_PATH = "~/sylphos_models/Fun-CosyVoice3-0.5B"
+DEFAULT_COSYVOICE_REPO = "~/CosyVoice"
+DEFAULT_MODEL_PATH = "~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B"
+DEFAULT_RL_MODEL_PATH = "~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl"
 DEFAULT_DEVICE = "cuda"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 9880
 DEFAULT_OUTPUT_PATH = "~/sylphos_outputs/tts/latest_tts.wav"
-DEFAULT_SAMPLE_RATE = 22050
+DEFAULT_PROMPT_DIR = "/home/shakamilo/sylphos_services/cosyvoice3/prompts"
+DEFAULT_SAMPLE_RATE = 24000
+DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
+VALID_MODEL_VERSIONS = {"base", "rl"}
 
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default).strip() or default
 
 
+def _expand_path(value: str) -> str:
+    return str(Path(value).expanduser())
+
+
+def _cosyvoice_repo() -> str:
+    return _expand_path(_env("COSYVOICE_REPO", DEFAULT_COSYVOICE_REPO))
+
+
+def _cosyvoice_py_path(repo: str | None = None) -> Path:
+    return Path(repo or _cosyvoice_repo()).expanduser() / "cosyvoice" / "cli" / "cosyvoice.py"
+
+
+def _cosyvoice_path_entries(repo: str | None = None) -> list[str]:
+    root = Path(repo or _cosyvoice_repo()).expanduser()
+    return [str(root), str(root / "third_party" / "Matcha-TTS")]
+
+
+def _ensure_cosyvoice_repo_on_path(repo: str | None = None) -> list[str]:
+    """Add the official CosyVoice checkout and Matcha-TTS folder to sys.path."""
+
+    added: list[str] = []
+    for entry in reversed(_cosyvoice_path_entries(repo)):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            added.append(entry)
+    return added
+
+
 def _module_exists(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ValueError):
         return False
 
 
 def _model_path() -> str:
-    return str(Path(_env("COSYVOICE_MODEL_PATH", DEFAULT_MODEL_PATH)).expanduser())
+    return _expand_path(_env("COSYVOICE_MODEL_PATH", DEFAULT_MODEL_PATH))
+
+
+def _rl_model_path() -> str:
+    return _expand_path(_env("COSYVOICE_RL_MODEL_PATH", DEFAULT_RL_MODEL_PATH))
+
+
+def _model_path_for_version(model_version: str | None) -> str:
+    version = (model_version or "base").strip().lower()
+    if version == "base":
+        return _model_path()
+    if version == "rl":
+        return _rl_model_path()
+    raise ValueError("model_version must be 'base' or 'rl'.")
 
 
 def _device() -> str:
@@ -56,51 +103,162 @@ def _default_output_path() -> Path:
     return Path(DEFAULT_OUTPUT_PATH).expanduser()
 
 
+def _built_in_prompt_wav_path() -> Path:
+    return Path(_cosyvoice_repo()).expanduser() / "asset" / "zero_shot_prompt.wav"
+
+
+def _default_prompt_wav_path() -> Path:
+    return Path(_env("COSYVOICE_PROMPT_WAV", str(_built_in_prompt_wav_path()))).expanduser()
+
+
+def _default_prompt_text() -> str:
+    return _env("COSYVOICE_PROMPT_TEXT", DEFAULT_PROMPT_TEXT)
+
+
+def _prompt_dir() -> Path:
+    return Path(_env("COSYVOICE_PROMPT_DIR", DEFAULT_PROMPT_DIR)).expanduser()
+
+
+class BadRequestError(ValueError):
+    """Raised when a TTS request has invalid prompt/voice configuration."""
+
+
+def _format_synthesis_error(exc: Exception) -> str:
+    if isinstance(exc, KeyError) and exc.args:
+        speaker = str(exc.args[0])
+        return f"Unsupported speaker {speaker!r} for current model; use zero-shot prompt_wav/prompt_text instead."
+    return str(exc)
+
+
+def _cosyvoice_importable() -> bool:
+    _ensure_cosyvoice_repo_on_path()
+    return _module_exists("cosyvoice.cli.cosyvoice")
+
+
+def _preflight_errors(*, model_path: str | None = None, check_rl_model: bool = False) -> list[str]:
+    repo = _cosyvoice_repo()
+    _ensure_cosyvoice_repo_on_path(repo)
+    errors: list[str] = []
+
+    cosyvoice_py = _cosyvoice_py_path(repo)
+    if not cosyvoice_py.is_file():
+        errors.append(
+            "CosyVoice package is not importable because the expected source file does not exist: "
+            f"{cosyvoice_py}. Set COSYVOICE_REPO to the official CosyVoice checkout. Current sys.path: {sys.path}"
+        )
+    elif not _module_exists("cosyvoice.cli.cosyvoice"):
+        errors.append(
+            "CosyVoice package is not importable even after adding COSYVOICE_REPO to sys.path. "
+            f"Expected source file exists: {cosyvoice_py}. Current sys.path: {sys.path}"
+        )
+
+    selected_model_path = Path(model_path or _model_path()).expanduser()
+    if not selected_model_path.is_dir():
+        errors.append(
+            "CosyVoice model path does not exist or is not a directory: "
+            f"{selected_model_path}. Set COSYVOICE_MODEL_PATH to the full model directory, for example "
+            "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B."
+        )
+
+    if check_rl_model:
+        rl_path = Path(_rl_model_path()).expanduser()
+        if not rl_path.is_dir():
+            errors.append(
+                "CosyVoice RL model path does not exist or is not a directory: "
+                f"{rl_path}. Set COSYVOICE_RL_MODEL_PATH to the full RL model directory."
+            )
+    return errors
+
+
+_ensure_cosyvoice_repo_on_path()
+
+
 class TTSRequest(BaseModel):
     text: str = Field(..., description="Text to synthesize.")
     output_path: str | None = Field(default=None, description="Destination WAV path inside WSL2/Linux.")
     prompt_wav: str | None = Field(default=None, description="Optional zero-shot prompt WAV path.")
     prompt_text: str | None = Field(default=None, description="Text transcript for prompt_wav.")
     speaker: str | None = Field(default=None, description="Optional speaker/voice name for SFT-capable models.")
-    model_version: str | None = Field(default=None, description="Accepted for Windows client compatibility; not used by this template.")
+    voice_id: str | None = Field(default=None, description="Optional zero-shot voice id resolved from COSYVOICE_PROMPT_DIR.")
+    model_version: str = Field(default="base", description="CosyVoice3 model version: 'base' or 'rl'.")
+
+
+def concat_tts_chunks(chunks: list[Any]) -> Any:
+    """Concatenate CosyVoice tts_speech chunks along the time axis."""
+
+    if not chunks:
+        raise RuntimeError("CosyVoice did not yield any audio chunks.")
+    if len(chunks) == 1:
+        return chunks[0]
+
+    torch = importlib.import_module("torch")
+    tensors = [torch.as_tensor(chunk).detach().cpu() for chunk in chunks]
+    if all(tensor.ndim == 1 for tensor in tensors):
+        return torch.cat(tensors, dim=0)
+
+    normalized = []
+    for tensor in tensors:
+        if tensor.ndim == 1:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.ndim > 2:
+            tensor = tensor.reshape(1, -1)
+        elif tensor.shape[0] > tensor.shape[-1]:
+            tensor = tensor.transpose(0, 1)
+        normalized.append(tensor)
+    return torch.cat(normalized, dim=-1)
 
 
 class DirectCosyVoiceRuntime:
-    """Minimal direct CosyVoice wrapper used when Sylphos is not importable."""
+    """Minimal direct CosyVoice wrapper loaded from the official source repo."""
 
-    def __init__(self, model_path: str, device: str) -> None:
+    def __init__(self, model_path: str, device: str | None = None) -> None:
         self.model_path = model_path
+        # COSYVOICE_DEVICE is reported in /health for diagnostics, but is not
+        # passed into official CosyVoice constructors unless their signatures
+        # explicitly add support for it in the future.
         self.device = device
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self._engine = self._build_model()
 
     def _build_model(self) -> Any:
+        _ensure_cosyvoice_repo_on_path()
         if not _module_exists("cosyvoice.cli.cosyvoice"):
             raise RuntimeError(
-                "CosyVoice package is not importable. Install CosyVoice from its official source repository "
-                "in the same WSL2 Python environment; requirements-tts.txt does not include CosyVoice itself."
+                "CosyVoice package is not importable. Set COSYVOICE_REPO to the official source checkout; "
+                f"expected {_cosyvoice_py_path()} to exist. Current sys.path: {sys.path}"
             )
-        module = importlib.import_module("cosyvoice.cli.cosyvoice")
+        try:
+            module = importlib.import_module("cosyvoice.cli.cosyvoice")
+        except Exception as exc:
+            raise RuntimeError(
+                "CosyVoice package is not importable even though the source path was configured. "
+                f"Expected source file: {_cosyvoice_py_path()} (exists={_cosyvoice_py_path().is_file()}). "
+                f"Current sys.path: {sys.path}. Import error: {exc}"
+            ) from exc
 
-        for class_name in ("CosyVoice3", "CosyVoice2", "CosyVoice"):
+        for class_name in ("AutoModel", "CosyVoice3", "CosyVoice2", "CosyVoice"):
             engine_class = getattr(module, class_name, None)
             if engine_class is not None:
                 break
         else:
-            raise RuntimeError("CosyVoice install does not expose CosyVoice3, CosyVoice2, or CosyVoice.")
+            raise RuntimeError("CosyVoice install does not expose AutoModel, CosyVoice3, CosyVoice2, or CosyVoice.")
 
-        kwargs: dict[str, Any] = {
-            "model_dir": self.model_path,
-            "device": self.device,
-            "load_jit": False,
-            "load_trt": False,
-            "load_vllm": False,
-        }
-        init_signature = inspect.signature(engine_class)
-        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_signature.parameters.values())
-        if not accepts_kwargs:
-            kwargs = {key: value for key, value in kwargs.items() if key in init_signature.parameters}
-        return engine_class(**kwargs)
+        # Match the verified minimal CosyVoice3 invocation as closely as
+        # possible: AutoModel(model_dir="...").  In particular, do not pass
+        # device=... into AutoModel/CosyVoice3/CosyVoice2/CosyVoice just because
+        # COSYVOICE_DEVICE exists for health diagnostics.
+        kwargs: dict[str, Any] = {"model_dir": self.model_path}
+        try:
+            init_signature = inspect.signature(engine_class)
+        except (TypeError, ValueError):
+            return engine_class(**kwargs)
+
+        parameters = init_signature.parameters
+        if "model_dir" in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            if "device" in parameters:
+                kwargs["device"] = self.device
+            return engine_class(**kwargs)
+        return engine_class(self.model_path)
 
     def synthesize_to_file(self, text: str, output_path: str | Path, **kwargs: Any) -> Any:
         if not text or not text.strip():
@@ -110,7 +268,11 @@ class DirectCosyVoiceRuntime:
         output.parent.mkdir(parents=True, exist_ok=True)
 
         prompt_wav = kwargs.pop("prompt_wav", None)
-        prompt_text = kwargs.pop("prompt_text", "") or ""
+        if prompt_wav is None:
+            prompt_wav = str(_default_prompt_wav_path())
+        prompt_text = kwargs.pop("prompt_text", None)
+        if prompt_text is None:
+            prompt_text = _default_prompt_text()
         speaker = kwargs.pop("speaker", None) or kwargs.pop("voice", None)
         generated = self._synthesize(text=text.strip(), prompt_wav=prompt_wav, prompt_text=prompt_text, speaker=speaker, **kwargs)
         audio, sample_rate = self._extract_audio(generated)
@@ -118,52 +280,53 @@ class DirectCosyVoiceRuntime:
         return output
 
     def _synthesize(self, *, text: str, prompt_wav: Any, prompt_text: str, speaker: str | None, **kwargs: Any) -> Any:
-        if prompt_wav:
-            call = getattr(self._engine, "inference_zero_shot", None)
-            if call is None:
-                raise RuntimeError("This CosyVoice runtime does not support prompt_wav / zero-shot synthesis.")
-            return call(text, prompt_text, str(prompt_wav), **kwargs)
-
         if speaker:
-            call = getattr(self._engine, "inference_sft", None)
-            if call is not None:
-                return call(text, speaker, **kwargs)
-            call = getattr(self._engine, "inference_instruct2", None) or getattr(self._engine, "inference_instruct", None)
-            if call is not None:
-                return call(text, speaker, "", **kwargs)
+            try:
+                call = getattr(self._engine, "inference_sft", None)
+                if call is not None:
+                    return call(text, speaker, **kwargs)
+                call = getattr(self._engine, "inference_instruct2", None) or getattr(self._engine, "inference_instruct", None)
+                if call is not None:
+                    return call(text, speaker, "", **kwargs)
+            except KeyError as exc:
+                raise RuntimeError(_format_synthesis_error(exc)) from exc
+            raise RuntimeError(f"Unsupported speaker {speaker!r} for current model; use zero-shot prompt_wav/prompt_text instead.")
 
-        call = getattr(self._engine, "inference_sft", None)
-        if call is not None:
-            return call(text, speaker or "中文女", **kwargs)
-
-        call = getattr(self._engine, "inference", None) or getattr(self._engine, "generate", None)
+        call = getattr(self._engine, "inference_zero_shot", None)
         if call is None:
-            raise RuntimeError("CosyVoice runtime does not expose a usable text-to-speech method.")
-        return call(text, **kwargs)
+            raise RuntimeError("This CosyVoice runtime does not support zero-shot synthesis; provide a model with inference_zero_shot.")
+        kwargs.setdefault("stream", False)
+        return call(text, prompt_text, str(prompt_wav), **kwargs)
 
     def _extract_audio(self, generated: Any) -> tuple[Any, int]:
-        item = self._first_generated_item(generated)
-        audio = item
-        sample_rate = self.sample_rate
-        if isinstance(item, dict):
-            for key in ("tts_speech", "speech", "audio", "wav"):
-                if item.get(key) is not None:
-                    audio = item[key]
-                    break
-            sample_rate = int(item.get("sample_rate") or item.get("sampling_rate") or item.get("sr") or sample_rate)
-        if audio is None:
-            raise RuntimeError("CosyVoice did not return writable audio data.")
-        return audio, sample_rate
+        chunks: list[Any] = []
+        sample_rate = int(getattr(self._engine, "sample_rate", self.sample_rate) or self.sample_rate)
 
-    def _first_generated_item(self, generated: Any) -> Any:
+        for item in self._generated_items(generated):
+            audio = item
+            if isinstance(item, dict):
+                for key in ("tts_speech", "speech", "audio", "wav"):
+                    if item.get(key) is not None:
+                        audio = item[key]
+                        break
+                sample_rate = int(item.get("sample_rate") or item.get("sampling_rate") or item.get("sr") or sample_rate)
+            if audio is not None:
+                chunks.append(audio)
+
+        if not chunks:
+            raise RuntimeError("CosyVoice did not yield any audio chunks.")
+        return concat_tts_chunks(chunks), sample_rate
+
+    def _generated_items(self, generated: Any) -> list[Any]:
         if isinstance(generated, dict):
-            return generated
-        if isinstance(generated, (str, bytes, bytearray)):
-            return generated
+            return [generated]
+        if isinstance(generated, (str, bytes, bytearray, Path)):
+            return [generated]
+        if hasattr(generated, "shape") or hasattr(generated, "ndim"):
+            return [generated]
         if isinstance(generated, Iterable):
-            for item in generated:
-                return item
-        return generated
+            return list(generated)
+        return [generated]
 
     def _write_wav(self, output: Path, *, audio: Any, sample_rate: int) -> None:
         if isinstance(audio, (str, Path)):
@@ -211,58 +374,77 @@ class DirectCosyVoiceRuntime:
             wav_file.writeframes(pcm16.tobytes())
 
 
-_engine: Any | None = None
-_engine_errors: list[str] = []
+_engines: dict[str, Any] = {}
+_engine_errors: dict[str, list[str]] = {}
 _engine_lock = Lock()
+# Backward-compatible test hooks for older tests in this repository.
+_engine: Any | None = None
 
 
-def _create_runtime() -> Any:
-    model_path = _model_path()
-    device = _device()
-    sylphos_error: Exception | str = "Sylphos adapter is not importable from the current Python path."
+def _create_runtime(model_version: str | None = "base") -> Any:
+    version = (model_version or "base").strip().lower()
+    if version not in VALID_MODEL_VERSIONS:
+        raise ValueError("model_version must be 'base' or 'rl'.")
 
-    if _module_exists("sylphos.voice.tts.cosyvoice"):
-        sylphos_cosyvoice = importlib.import_module("sylphos.voice.tts.cosyvoice")
-        engine_class = getattr(sylphos_cosyvoice, "CosyVoiceEngine")
+    model_path = _model_path_for_version(version)
+    preflight = _preflight_errors(model_path=model_path, check_rl_model=False)
+    if preflight:
+        raise RuntimeError(" ".join(preflight))
+    return DirectCosyVoiceRuntime(model_path=model_path, device=_device())
+
+
+def _get_runtime(model_version: str | None = "base") -> tuple[Any | None, list[str]]:
+    global _engine
+    version = (model_version or "base").strip().lower()
+    with _engine_lock:
+        if version == "base" and _engine is not None:
+            return _engine, list(_engine_errors.get(version, []))
+        if version in _engines:
+            return _engines[version], list(_engine_errors.get(version, []))
         try:
-            return engine_class(model=model_path, device=device)
+            runtime = _create_runtime(version)
+            _engines[version] = runtime
+            if version == "base":
+                _engine = runtime
+            _engine_errors.pop(version, None)
         except Exception as exc:
-            sylphos_error = exc
-
-    try:
-        return DirectCosyVoiceRuntime(model_path=model_path, device=device)
-    except Exception as direct_exc:
-        raise RuntimeError(
-            "Failed to load CosyVoice through the Sylphos adapter or direct CosyVoice API. "
-            f"Sylphos adapter error: {sylphos_error}. Direct CosyVoice error: {direct_exc}."
-        ) from direct_exc
+            _engine_errors[version] = [str(exc)]
+            return None, list(_engine_errors[version])
+        return _engines[version], []
 
 
-def _get_runtime() -> tuple[Any | None, list[str]]:
+def _reset_runtime_cache() -> None:
     global _engine
     with _engine_lock:
-        if _engine is not None:
-            return _engine, list(_engine_errors)
-        try:
-            _engine = _create_runtime()
-            _engine_errors.clear()
-        except Exception as exc:
-            _engine_errors[:] = [str(exc)]
-            return None, list(_engine_errors)
-        return _engine, []
+        _engines.clear()
+        _engine_errors.clear()
+        _engine = None
 
 
 def _health_payload() -> dict[str, Any]:
-    runtime, errors = _get_runtime()
+    base_preflight_errors = _preflight_errors(model_path=_model_path(), check_rl_model=False)
+    runtime, load_errors = (None, base_preflight_errors)
+    if not base_preflight_errors:
+        runtime, load_errors = _get_runtime("base")
     loaded = runtime is not None
+    default_prompt_wav = _default_prompt_wav_path()
+    prompt_dir = _prompt_dir()
     return {
         "ok": loaded,
         "service": SERVICE_NAME,
+        "cosyvoice_repo": _cosyvoice_repo(),
         "model_path": _model_path(),
+        "rl_model_path": _rl_model_path(),
         "device": _device(),
         "python": sys.version.split()[0],
+        "cosyvoice_importable": _cosyvoice_importable(),
         "cosyvoice_loaded": loaded,
-        "errors": errors,
+        "default_prompt_wav": str(default_prompt_wav),
+        "default_prompt_wav_exists": default_prompt_wav.is_file(),
+        "prompt_dir": str(prompt_dir),
+        "prompt_dir_exists": prompt_dir.is_dir(),
+        "prompt_text_configured": bool(_default_prompt_text()),
+        "errors": load_errors,
     }
 
 
@@ -274,57 +456,147 @@ def health() -> dict[str, Any]:
     return _health_payload()
 
 
-@app.post("/tts")
-def tts(request: TTSRequest) -> dict[str, Any]:
+
+def _resolve_prompt_config(request: TTSRequest) -> tuple[str, str]:
+    request_prompt_wav = (request.prompt_wav or "").strip() if request.prompt_wav is not None else ""
+    request_prompt_text = request.prompt_text if request.prompt_text is not None else None
+
+    # Explicit prompt_wav/prompt_text fields have the highest priority. If one
+    # side is omitted, fill it from the configured default rather than voice_id.
+    if request_prompt_wav or request_prompt_text is not None:
+        prompt_wav = request_prompt_wav or str(_default_prompt_wav_path())
+        prompt_text = request_prompt_text if request_prompt_text is not None else _default_prompt_text()
+        return prompt_wav, prompt_text
+
+    voice_id = (request.voice_id or "").strip() if getattr(request, "voice_id", None) is not None else ""
+    if voice_id:
+        if "/" in voice_id or "\\" in voice_id or voice_id in {".", ".."}:
+            raise BadRequestError("voice_id must be a simple file stem such as 'female_01'.")
+        prompt_dir = _prompt_dir()
+        prompt_wav_path = prompt_dir / f"{voice_id}.wav"
+        prompt_text_path = prompt_dir / f"{voice_id}.txt"
+        missing: list[str] = []
+        if not prompt_wav_path.is_file():
+            missing.append(str(prompt_wav_path))
+        if not prompt_text_path.is_file():
+            missing.append(str(prompt_text_path))
+        if missing:
+            raise BadRequestError(f"voice_id {voice_id!r} is missing prompt file(s): {', '.join(missing)}")
+        prompt_text = prompt_text_path.read_text(encoding="utf-8").strip()
+        if not prompt_text:
+            raise BadRequestError(f"voice_id {voice_id!r} prompt text file is empty: {prompt_text_path}")
+        return str(prompt_wav_path), prompt_text
+
+    return str(_default_prompt_wav_path()), _default_prompt_text()
+
+def _synthesize_request(request: TTSRequest) -> tuple[dict[str, Any], Path]:
     started = time.perf_counter()
     output_path = Path(request.output_path).expanduser() if request.output_path else _default_output_path()
+    version = (request.model_version or "base").strip().lower()
     errors: list[str] = []
+    runtime_loaded = False
 
     try:
-        runtime, load_errors = _get_runtime()
+        model_path = _model_path_for_version(version)
+        runtime, load_errors = _get_runtime(version)
         if runtime is None:
+            errors = load_errors or ["CosyVoice runtime is not loaded."]
             return {
                 "ok": False,
+                "error": errors[0],
+                "cosyvoice_loaded": False,
+                "model_version": version,
+                "model_path": model_path,
                 "output_path": str(output_path),
                 "elapsed_seconds": round(time.perf_counter() - started, 3),
-                "errors": load_errors or ["CosyVoice runtime is not loaded."],
-            }
+                "errors": errors,
+            }, output_path
+        prompt_wav, prompt_text = _resolve_prompt_config(request)
+        runtime_loaded = True
         output_path.parent.mkdir(parents=True, exist_ok=True)
         runtime.synthesize_to_file(
             request.text,
             output_path,
-            prompt_wav=request.prompt_wav,
-            prompt_text=request.prompt_text,
+            prompt_wav=prompt_wav,
+            prompt_text=prompt_text,
             speaker=request.speaker,
         )
-    except Exception as exc:
+    except BadRequestError as exc:
         errors.append(str(exc))
+        return {
+            "ok": False,
+            "error": errors[0],
+            "cosyvoice_loaded": runtime_loaded,
+            "model_version": version,
+            "model_path": _model_path_for_version(version) if version in VALID_MODEL_VERSIONS else "",
+            "output_path": str(output_path),
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "status_code": 400,
+            "errors": errors,
+        }, output_path
+    except Exception as exc:
+        errors.append(_format_synthesis_error(exc))
 
     payload = {
         "ok": not errors,
+        "error": errors[0] if errors else "",
+        "cosyvoice_loaded": runtime_loaded,
+        "model_version": version,
+        "model_path": _model_path_for_version(version) if version in VALID_MODEL_VERSIONS else "",
         "output_path": str(output_path),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "errors": errors,
     }
     if not errors and output_path.exists():
-        # Allows existing Windows-side clients that expect WAV data in JSON to
-        # work while still exposing the WSL2 output path requested by this API.
         payload["wav_base64"] = base64.b64encode(output_path.read_bytes()).decode("ascii")
-    return payload
+    return payload, output_path
+
+
+def _error_status_code(payload: dict[str, Any]) -> int:
+    return int(payload.get("status_code") or (503 if payload.get("cosyvoice_loaded") is False else 500))
+
+
+@app.post("/tts")
+def tts(request: TTSRequest) -> Response:
+    payload, _ = _synthesize_request(request)
+    status_code = 200 if payload.get("ok") else _error_status_code(payload)
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 
 @app.post("/v1/tts")
-def tts_v1(request: TTSRequest) -> dict[str, Any]:
-    """Compatibility alias for existing Windows-side Sylphos clients."""
-    return tts(request)
+def tts_v1(request: TTSRequest) -> Response:
+    """Windows-side Sylphos compatibility endpoint returning WAV bytes."""
 
+    payload, output_path = _synthesize_request(request)
+    if payload.get("ok") and output_path.exists():
+        wav_bytes = output_path.read_bytes()
+        if wav_bytes.startswith(b"RIFF") and b"WAVE" in wav_bytes[:16]:
+            return Response(content=wav_bytes, media_type="audio/wav")
+        payload = {
+            **payload,
+            "ok": False,
+            "error": "CosyVoice output file is not a RIFF/WAVE file.",
+            "errors": ["CosyVoice output file is not a RIFF/WAVE file."],
+        }
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            status_code=500,
+            media_type="application/json",
+        )
 
-def main() -> None:
-    uvicorn = importlib.import_module("uvicorn")
-    host = _env("COSYVOICE_HOST", DEFAULT_HOST)
-    port = int(_env("COSYVOICE_PORT", str(DEFAULT_PORT)))
-    uvicorn.run("cosyvoice_server:app", host=host, port=port)
+    status_code = _error_status_code(payload)
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    uvicorn.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT)
