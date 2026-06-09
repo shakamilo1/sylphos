@@ -557,55 +557,65 @@ python cosyvoice_server.py
 仓库模板 `services/cosyvoice3/cosyvoice_server.py` 已包含以下能力：
 
 1. 提供健康检查接口：`GET /health`。
-2. 提供语音合成接口：`POST /tts`，并保留 `POST /v1/tts` 作为 Windows 端现有客户端兼容别名。
+2. 提供语音合成接口：`POST /tts`，并保留 `POST /v1/tts` 作为 Windows 端现有客户端兼容别名。`/v1/tts` 推荐直接返回 `audio/wav` 二进制数据，避免 Windows 端依赖 WSL2 内部文件路径。
 3. 接收请求参数：
    - `text`：需要合成的文本。
+   - `model_version`：可选，`base` 或 `rl`，默认 `base`。
    - `output_path`：可选，WSL2/Linux 内的 WAV 输出路径；未提供时默认写入 `~/sylphos_outputs/tts/latest_tts.wav`。
    - `prompt_wav` / `prompt_text`：可选 zero-shot 参考音频与文本。
    - `speaker`：可选说话人/音色名。
-4. 通过 `COSYVOICE_MODEL_PATH` 和 `COSYVOICE_DEVICE` 选择模型目录与设备。
-5. 优先复用 Sylphos 的 `CosyVoiceEngine`，在复制到服务目录且无法导入 Sylphos 包时回退到最小 CosyVoice 直接封装。
-6. 调用 CosyVoice3 生成 WAV 音频，并以 JSON 返回 `ok`、`output_path`、`elapsed_seconds` 和 `errors`。
-7. 在缺少 `cosyvoice` 包、模型加载失败或合成失败时返回明确错误信息，不在服务导入阶段崩溃。
+4. 通过 `COSYVOICE_REPO` 指向本地 CosyVoice 官方仓库源码，并在启动时自动加入：
+   - `/home/shakamilo/CosyVoice`
+   - `/home/shakamilo/CosyVoice/third_party/Matcha-TTS`
+5. 通过 `COSYVOICE_MODEL_PATH`、`COSYVOICE_RL_MODEL_PATH` 和 `COSYVOICE_DEVICE` 选择 Base / RL 模型目录与设备。
+6. 直接从官方仓库导入 `from cosyvoice.cli.cosyvoice import AutoModel`，不要求 CosyVoice 已经通过 `pip install` 安装到 site-packages。
+7. 调用 CosyVoice3 生成 WAV 音频；`/tts` 会以 JSON 返回 `wav_base64` 以便兼容调试和旧式调用，`/v1/tts` 会返回 `audio/wav`。
+8. 在缺少 `cosyvoice` 源码、模型路径不存在、模型加载失败或合成失败时返回明确错误信息，不在服务导入阶段崩溃。
 
 ### 9.3 推荐服务配置项
 
-`cosyvoice_server.py` 支持以下环境变量；默认值适合 WSL2 Ubuntu，可按实际模型目录调整：
+`cosyvoice_server.py` 支持以下环境变量；默认值面向已经跑通的 WSL2 Ubuntu 部署路径：
 
 ```text
-COSYVOICE_MODEL_PATH=~/sylphos_models/Fun-CosyVoice3-0.5B
+COSYVOICE_REPO=~/CosyVoice
+COSYVOICE_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+COSYVOICE_RL_MODEL_PATH=~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 COSYVOICE_DEVICE=cuda
 COSYVOICE_HOST=0.0.0.0
 COSYVOICE_PORT=9880
 ```
 
-如果模型仍放在本部署文档前文的服务目录下，可以这样启动：
+如果模型放在服务目录下，也可以显式覆盖：
 
 ```bash
-export COSYVOICE_MODEL_PATH=~/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+export COSYVOICE_REPO=/home/shakamilo/CosyVoice
+export COSYVOICE_MODEL_PATH=/home/shakamilo/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+export COSYVOICE_RL_MODEL_PATH=/home/shakamilo/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B-rl
 export COSYVOICE_DEVICE=cuda
 ```
 
+> 注意：`AutoModel` 对目录名识别较敏感。不要把 `pretrained_models/base` 或 `pretrained_models/rl` 这类简化软链接直接传给服务端；应传入包含模型名的真实目录，例如 `Fun-CosyVoice3-0.5B` 或 `Fun-CosyVoice3-0.5B-rl`。
+
 ### 9.4 启动 FastAPI 服务
 
-进入服务目录并激活 Conda 环境：
+推荐启动方式如下：
 
 ```bash
-cd ~/sylphos_services/cosyvoice3
+cd /home/shakamilo/sylphos_services/cosyvoice3
 conda activate cosyvoice3
+COSYVOICE_REPO=/home/shakamilo/CosyVoice \
+COSYVOICE_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B \
+COSYVOICE_RL_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl \
+uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
-启动服务（二选一）：
-
-```bash
-python cosyvoice_server.py
-```
-
-或：
+如果已经进入 `/home/shakamilo/sylphos_services/cosyvoice3`，且使用默认路径，也可以简化为：
 
 ```bash
 uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
+
+也支持在任意目录启动，只要显式设置 `COSYVOICE_REPO`、`COSYVOICE_MODEL_PATH` 和 `COSYVOICE_RL_MODEL_PATH`，并使用可导入到 `cosyvoice_server.py` 的启动方式。
 
 参数说明：
 
@@ -620,9 +630,11 @@ uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```ini
 [Service]
 WorkingDirectory=/home/<user>/sylphos_services/cosyvoice3
-Environment=COSYVOICE_MODEL_PATH=/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B
+Environment=COSYVOICE_REPO=/home/<user>/CosyVoice
+Environment=COSYVOICE_MODEL_PATH=/home/<user>/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+Environment=COSYVOICE_RL_MODEL_PATH=/home/<user>/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
 Environment=COSYVOICE_DEVICE=cuda
-ExecStart=/home/<user>/miniconda3/envs/cosyvoice3/bin/python /home/<user>/sylphos_services/cosyvoice3/cosyvoice_server.py
+ExecStart=/home/<user>/miniconda3/envs/cosyvoice3/bin/uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
 如果选择直接从仓库运行，则将 `WorkingDirectory` 和 `ExecStart` 改为仓库中的 `services/cosyvoice3/cosyvoice_server.py`。
@@ -641,22 +653,26 @@ curl http://127.0.0.1:9880/health
 {
   "ok": true,
   "service": "cosyvoice3",
-  "model_path": "/home/<user>/sylphos_services/cosyvoice3/pretrained_models/Fun-CosyVoice3-0.5B",
+  "cosyvoice_repo": "/home/shakamilo/CosyVoice",
+  "model_path": "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B",
+  "rl_model_path": "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl",
   "device": "cuda",
-  "python": "3.10.14",
+  "python": "3.10.20",
+  "cosyvoice_importable": true,
   "cosyvoice_loaded": true,
   "errors": []
 }
 ```
 
-如果健康检查失败，应优先检查：
+如果 `/health` 返回 `cosyvoice_loaded=false` 且错误包含 `CosyVoice package is not importable`，通常说明 FastAPI 服务进程没有把 `/home/shakamilo/CosyVoice` 加入 `PYTHONPATH` / `sys.path`。此时优先检查：
 
-1. Conda 环境是否已激活。
-2. `uvicorn` 是否安装。
-3. `cosyvoice_server.py` 是否位于当前目录，或 systemd `ExecStart` 是否指向实际存在的文件。
-4. 模型路径是否配置正确。
-5. CUDA / PyTorch 是否可用。
-6. 端口 `9880` 是否被其他程序占用。
+1. `COSYVOICE_REPO` 是否指向官方仓库源码，例如 `/home/shakamilo/CosyVoice`。
+2. `/home/shakamilo/CosyVoice/cosyvoice/cli/cosyvoice.py` 是否存在。
+3. `/health` 返回的错误中打印的当前 `sys.path` 是否包含 `/home/shakamilo/CosyVoice` 和 `/home/shakamilo/CosyVoice/third_party/Matcha-TTS`。
+4. `COSYVOICE_MODEL_PATH` 是否指向真实模型目录 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`，而不是旧的 `/home/shakamilo/sylphos_models/Fun-CosyVoice3-0.5B`。
+5. Conda 环境、`uvicorn`、CUDA / PyTorch 和端口 `9880` 是否正常。
+
+如果在 `/home/shakamilo/CosyVoice` 里直接运行最小推理脚本可以成功生成 WAV，但 FastAPI `/health` 失败，优先检查 `COSYVOICE_REPO`、`PYTHONPATH` / `sys.path` 和 `model_path`，不要先怀疑 GPU、模型或 PyTorch。
 
 ### 9.6 在 WSL2 中测试 TTS 接口
 
