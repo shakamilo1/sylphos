@@ -89,12 +89,43 @@ def test_classify_risk_levels():
     assert classify_risk("查询系统状态") == "low"
     assert classify_risk("创建一个临时文件") == "medium"
     assert classify_risk("下载脚本并执行，里面有 token") == "high"
+    assert classify_risk("帮我处理一下这个东西") == "medium"
+
+
+def test_high_risk_confirmation_requires_literal_true(tmp_path):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=True))
+
+    for confirmed in ("false", "0", 1, False, None):
+        result = bridge.submit_text("delete all files in workspace", source="debug", context={"confirmed": confirmed})
+        assert result.status == "needs_confirmation"
+        assert result.needs_confirmation is True
+
+    confirmed_result = bridge.submit_text(
+        "delete all files in workspace", source="debug", context={"confirmed": True}
+    )
+    assert confirmed_result.status == "dry_run"
+    assert confirmed_result.needs_confirmation is False
+
+
+def test_english_destructive_file_requests_are_high_risk():
+    high_risk_texts = [
+        "delete all files",
+        "remove project directory",
+        "erase workspace",
+        "wipe folder",
+        "clear directory",
+        "purge files",
+        "destroy files",
+    ]
+
+    for text in high_risk_texts:
+        assert classify_risk(text) == "high"
 
 
 def test_gateway_mode_reuses_existing_openclaw_client_result(tmp_path):
     client = FakeAgentClient()
     bridge = SylphosOpenClawBridge(
-        make_config(tmp_path, dry_run=False, mode="gateway", gateway_url="http://127.0.0.1:18789"),
+        make_config(tmp_path, dry_run=False, mode="gateway", http_base_url="http://127.0.0.1:18789"),
         agent_client=client,
     )
 
@@ -124,7 +155,7 @@ def test_gateway_timeout_maps_to_structured_timeout(tmp_path):
 
 def test_gateway_health_uses_pr15_http_client_configuration(tmp_path):
     bridge = SylphosOpenClawBridge(
-        make_config(tmp_path, mode="gateway", gateway_url="ws://127.0.0.1:18789", auth_token="secret-token")
+        make_config(tmp_path, mode="gateway", http_base_url="http://127.0.0.1:18789", auth_token="secret-token")
     )
 
     health = bridge.health_check()
@@ -133,3 +164,24 @@ def test_gateway_health_uses_pr15_http_client_configuration(tmp_path):
     assert health["status"] == "configured"
     assert health["base_url"] == "http://127.0.0.1:18789"
     assert health["token_present"] is True
+
+
+def test_legacy_gateway_url_is_only_http_compatibility_for_gateway_mode(tmp_path):
+    bridge = SylphosOpenClawBridge(
+        make_config(tmp_path, mode="gateway", gateway_url="ws://127.0.0.1:18790")
+    )
+
+    health = bridge.health_check()
+
+    assert health["base_url"] == "http://127.0.0.1:18790"
+
+
+def test_websocket_mode_is_explicit_placeholder(tmp_path):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=False, mode="ws"))
+
+    result = bridge.submit_text("查询当前状态", source="debug")
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert "WebSocket" in (result.error or "")
+    assert bridge.health_check()["status"] == "not_implemented"

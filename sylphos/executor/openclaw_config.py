@@ -16,14 +16,18 @@ from typing import Any
 
 TOOL_PROVIDER = "openclaw"
 
-OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket
+OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket / ws
 OPENCLAW_DRY_RUN = True
 
 OPENCLAW_CLI_PATH = "openclaw"
 OPENCLAW_WORKSPACE = None
 OPENCLAW_TIMEOUT_SECONDS = 120
 
-OPENCLAW_GATEWAY_URL = "ws://127.0.0.1:18789"
+OPENCLAW_HTTP_BASE_URL = "http://127.0.0.1:18789"
+OPENCLAW_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
+# Deprecated compatibility alias for early PR #19 drafts. Prefer the two
+# transport-specific settings above.
+OPENCLAW_GATEWAY_URL = None
 OPENCLAW_AUTH_TOKEN = None
 OPENCLAW_CLIENT_ROLE = "operator"
 OPENCLAW_SESSION_NAME = "sylphos"
@@ -46,7 +50,9 @@ class OpenClawBridgeConfig:
     cli_path: str = OPENCLAW_CLI_PATH
     workspace: str | None = OPENCLAW_WORKSPACE
     timeout_seconds: float = OPENCLAW_TIMEOUT_SECONDS
-    gateway_url: str = OPENCLAW_GATEWAY_URL
+    http_base_url: str = OPENCLAW_HTTP_BASE_URL
+    gateway_ws_url: str = OPENCLAW_GATEWAY_WS_URL
+    gateway_url: str | None = OPENCLAW_GATEWAY_URL
     auth_token: str | None = OPENCLAW_AUTH_TOKEN
     client_role: str = OPENCLAW_CLIENT_ROLE
     session_name: str = OPENCLAW_SESSION_NAME
@@ -86,6 +92,16 @@ def _optional_text(name: str, default: str | None) -> str | None:
     return value or None
 
 
+def _gateway_url_to_http_base_url(gateway_url: str | None) -> str | None:
+    if not gateway_url:
+        return None
+    if gateway_url.startswith("ws://"):
+        return "http://" + gateway_url.removeprefix("ws://")
+    if gateway_url.startswith("wss://"):
+        return "https://" + gateway_url.removeprefix("wss://")
+    return gateway_url
+
+
 def _load_local_overrides() -> dict[str, Any]:
     spec = importlib.util.find_spec("sylphos.config.local_config")
     if spec is None:
@@ -98,6 +114,8 @@ def _load_local_overrides() -> dict[str, Any]:
         "OPENCLAW_CLI_PATH",
         "OPENCLAW_WORKSPACE",
         "OPENCLAW_TIMEOUT_SECONDS",
+        "OPENCLAW_HTTP_BASE_URL",
+        "OPENCLAW_GATEWAY_WS_URL",
         "OPENCLAW_GATEWAY_URL",
         "OPENCLAW_AUTH_TOKEN",
         "OPENCLAW_CLIENT_ROLE",
@@ -112,6 +130,28 @@ def _load_local_overrides() -> dict[str, Any]:
     return {name: getattr(module, name) for name in names if hasattr(module, name)}
 
 
+_LOCAL_NAME_TO_FIELD = {
+    "TOOL_PROVIDER": "tool_provider",
+    "OPENCLAW_MODE": "mode",
+    "OPENCLAW_DRY_RUN": "dry_run",
+    "OPENCLAW_CLI_PATH": "cli_path",
+    "OPENCLAW_WORKSPACE": "workspace",
+    "OPENCLAW_TIMEOUT_SECONDS": "timeout_seconds",
+    "OPENCLAW_HTTP_BASE_URL": "http_base_url",
+    "OPENCLAW_GATEWAY_WS_URL": "gateway_ws_url",
+    "OPENCLAW_GATEWAY_URL": "gateway_url",
+    "OPENCLAW_AUTH_TOKEN": "auth_token",
+    "OPENCLAW_CLIENT_ROLE": "client_role",
+    "OPENCLAW_SESSION_NAME": "session_name",
+    "OPENCLAW_LOG_RAW_OUTPUT": "log_raw_output",
+    "OPENCLAW_MAX_TTS_CHARS": "max_tts_chars",
+    "OPENCLAW_MAX_UI_CHARS": "max_ui_chars",
+    "OPENCLAW_LOG_DIR": "log_dir",
+    "OPENCLAW_SYLPHOS_LOG_PATH": "sylphos_log_path",
+    "OPENCLAW_AUDIT_LOG_PATH": "audit_log_path",
+}
+
+
 def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
     """Load OpenClaw bridge settings from defaults, local config, and env vars."""
 
@@ -122,6 +162,8 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
         "cli_path": OPENCLAW_CLI_PATH,
         "workspace": OPENCLAW_WORKSPACE,
         "timeout_seconds": OPENCLAW_TIMEOUT_SECONDS,
+        "http_base_url": OPENCLAW_HTTP_BASE_URL,
+        "gateway_ws_url": OPENCLAW_GATEWAY_WS_URL,
         "gateway_url": OPENCLAW_GATEWAY_URL,
         "auth_token": OPENCLAW_AUTH_TOKEN,
         "client_role": OPENCLAW_CLIENT_ROLE,
@@ -135,36 +177,7 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
     }
 
     for key, value in _load_local_overrides().items():
-        field_name = key.removeprefix("OPENCLAW_").lower()
-        if key == "TOOL_PROVIDER":
-            field_name = "tool_provider"
-        elif field_name == "cli_path":
-            field_name = "cli_path"
-        elif field_name == "dry_run":
-            field_name = "dry_run"
-        elif field_name == "log_raw_output":
-            field_name = "log_raw_output"
-        elif field_name == "max_tts_chars":
-            field_name = "max_tts_chars"
-        elif field_name == "max_ui_chars":
-            field_name = "max_ui_chars"
-        elif field_name == "log_dir":
-            field_name = "log_dir"
-        elif field_name == "sylphos_log_path":
-            field_name = "sylphos_log_path"
-        elif field_name == "audit_log_path":
-            field_name = "audit_log_path"
-        elif field_name == "auth_token":
-            field_name = "auth_token"
-        elif field_name == "timeout_seconds":
-            field_name = "timeout_seconds"
-        elif field_name == "gateway_url":
-            field_name = "gateway_url"
-        elif field_name == "client_role":
-            field_name = "client_role"
-        elif field_name == "session_name":
-            field_name = "session_name"
-        values[field_name] = value
+        values[_LOCAL_NAME_TO_FIELD[key]] = value
 
     values.update(
         {
@@ -174,7 +187,9 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
             "cli_path": os.getenv("OPENCLAW_CLI_PATH", str(values["cli_path"])),
             "workspace": _optional_text("OPENCLAW_WORKSPACE", values["workspace"]),
             "timeout_seconds": _env_float("OPENCLAW_TIMEOUT_SECONDS", float(values["timeout_seconds"])),
-            "gateway_url": os.getenv("OPENCLAW_GATEWAY_URL", str(values["gateway_url"])),
+            "http_base_url": os.getenv("OPENCLAW_HTTP_BASE_URL", str(values["http_base_url"])),
+            "gateway_ws_url": os.getenv("OPENCLAW_GATEWAY_WS_URL", str(values["gateway_ws_url"])),
+            "gateway_url": _optional_text("OPENCLAW_GATEWAY_URL", values["gateway_url"]),
             "auth_token": _optional_text("OPENCLAW_AUTH_TOKEN", values["auth_token"]),
             "client_role": os.getenv("OPENCLAW_CLIENT_ROLE", str(values["client_role"])),
             "session_name": os.getenv("OPENCLAW_SESSION_NAME", str(values["session_name"])),
@@ -186,6 +201,10 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
             "audit_log_path": os.getenv("OPENCLAW_AUDIT_LOG_PATH", str(values["audit_log_path"])),
         }
     )
+
+    # Compatibility for early bridge configs that only set OPENCLAW_GATEWAY_URL.
+    if values["gateway_url"] and "OPENCLAW_HTTP_BASE_URL" not in os.environ:
+        values["http_base_url"] = _gateway_url_to_http_base_url(values["gateway_url"]) or values["http_base_url"]
 
     Path(values["log_dir"]).mkdir(parents=True, exist_ok=True)
     return OpenClawBridgeConfig(**values)

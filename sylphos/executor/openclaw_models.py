@@ -32,8 +32,8 @@ class OpenClawRequest:
 
 
 @dataclass(slots=True)
-class OpenClawResult:
-    """Structured result returned by OpenClawBridge to downstream Sylphos modules."""
+class OpenClawBridgeResult:
+    """Structured execution result returned by OpenClawBridge to downstream Sylphos modules."""
 
     request_id: str
     ok: bool

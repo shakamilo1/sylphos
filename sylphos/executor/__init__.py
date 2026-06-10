@@ -2,12 +2,12 @@
 
 from .openclaw_bridge import SylphosOpenClawBridge, classify_risk
 from .openclaw_config import OpenClawBridgeConfig, load_openclaw_bridge_config
-from .openclaw_models import OpenClawRequest, OpenClawResult
+from .openclaw_models import OpenClawRequest, OpenClawBridgeResult
 
 __all__ = [
     "OpenClawBridgeConfig",
     "OpenClawRequest",
-    "OpenClawResult",
+    "OpenClawBridgeResult",
     "SylphosOpenClawBridge",
     "classify_risk",
     "load_openclaw_bridge_config",

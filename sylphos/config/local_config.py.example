@@ -18,11 +18,14 @@ OPENCLAW_MAX_SPOKEN_CHARS = 300
 
 # OpenClaw bridge settings (optional, untracked local override names).
 TOOL_PROVIDER = "openclaw"
-OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket
+OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket / ws
 OPENCLAW_DRY_RUN = True
 OPENCLAW_CLI_PATH = "openclaw"
 OPENCLAW_WORKSPACE = None
-OPENCLAW_GATEWAY_URL = "ws://127.0.0.1:18789"
+OPENCLAW_HTTP_BASE_URL = "http://127.0.0.1:18789"
+OPENCLAW_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
+# Deprecated compatibility alias for early bridge configs; prefer the two URLs above.
+OPENCLAW_GATEWAY_URL = None
 OPENCLAW_AUTH_TOKEN = None
 OPENCLAW_CLIENT_ROLE = "operator"
 OPENCLAW_SESSION_NAME = "sylphos"

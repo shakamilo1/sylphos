@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -24,16 +23,18 @@ from sylphos.llm.openclaw_client import (
     create_openclaw_client,
 )
 
-from .openclaw_config import OPENCLAW_GATEWAY_URL as DEFAULT_OPENCLAW_GATEWAY_URL
+from .openclaw_config import OPENCLAW_HTTP_BASE_URL as DEFAULT_OPENCLAW_HTTP_BASE_URL
 from .openclaw_config import OpenClawBridgeConfig, load_openclaw_bridge_config
-from .openclaw_models import OpenClawRequest, OpenClawResult, utc_now_iso
+from .openclaw_models import OpenClawRequest, OpenClawBridgeResult, utc_now_iso
 
 _SECRET_KEY_RE = re.compile(r"(token|password|passwd|secret|api[_-]?key|auth|credential)", re.IGNORECASE)
 _SECRET_VALUE_RE = re.compile(
     r"(?i)(token|password|passwd|secret|api[_-]?key|authorization|bearer)(\s*[:=]\s*|\s+)[^\s,;]+"
 )
 _HIGH_RISK_RE = re.compile(
-    r"(?i)(\brm\s+-rf\b|\bdel\s+/[sq]\b|删除|覆写|覆盖|format\s+|mkfs|system32|/etc/|"
+    r"(?i)(\brm\s+-rf\b|\bdel\s+/[sq]\b|delete\s+all\s+files|remove\s+project\s+directory|"
+    r"erase\s+workspace|wipe\s+folder|clear\s+directory|purge\s+files|destroy\s+files|"
+    r"删除|覆写|覆盖|format\s+|mkfs|system32|/etc/|"
     r"ssh[_ -]?key|id_rsa|\.ssh|token|password|passwd|secret|api[_-]?key|"
     r"curl\b.*\|\s*(sh|bash)|wget\b.*\|\s*(sh|bash)|下载.*执行|send\s+email|发送(邮件|消息)|"
     r"修改系统配置|registry|注册表|sudo\s+|chmod\s+777|未知脚本)"
@@ -55,7 +56,7 @@ def classify_risk(text: str) -> str:
         return "medium"
     if _LOW_RISK_RE.search(normalized):
         return "low"
-    return "low"
+    return "medium"
 
 
 def _clip(text: str | None, limit: int) -> str | None:
@@ -106,7 +107,7 @@ class SylphosOpenClawBridge:
         source: str = "debug",
         context: dict | None = None,
         dry_run: bool | None = None,
-    ) -> OpenClawResult:
+    ) -> OpenClawBridgeResult:
         """Create an OpenClawRequest from text and submit it through the bridge."""
 
         request = OpenClawRequest(
@@ -120,7 +121,7 @@ class SylphosOpenClawBridge:
         )
         return self.submit_request(request)
 
-    def submit_request(self, request: OpenClawRequest) -> OpenClawResult:
+    def submit_request(self, request: OpenClawRequest) -> OpenClawBridgeResult:
         """Submit a structured request, returning a structured result without crashing Sylphos."""
 
         started = datetime.now(UTC)
@@ -135,9 +136,9 @@ class SylphosOpenClawBridge:
         )
 
         risk = classify_risk(request.text)
-        confirmed = bool(request.context.get("confirmed"))
+        confirmed = request.context.get("confirmed") is True
         if risk == "high" and not confirmed:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="needs_confirmation",
@@ -164,7 +165,7 @@ class SylphosOpenClawBridge:
             result = self._run_websocket_request(request, started_at)
             self._finish_result(result, started)
         else:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="failed",
@@ -214,7 +215,7 @@ class SylphosOpenClawBridge:
                 "ok": False,
                 "provider": self.config.tool_provider,
                 "mode": self.config.mode,
-                "gateway_url": self.config.gateway_url,
+                "gateway_ws_url": self.config.gateway_ws_url,
                 "token_present": bool(self.config.auth_token),
                 "status": "not_implemented",
                 "message": "Typed WebSocket mode is reserved for the future OpenClaw protocol.",
@@ -233,6 +234,8 @@ class SylphosOpenClawBridge:
             "cli_path": getattr(config, "OPENCLAW_CLI_PATH", getattr(config, "cli_path", None)),
             "workspace": getattr(config, "OPENCLAW_WORKSPACE", getattr(config, "workspace", None)),
             "timeout_seconds": getattr(config, "OPENCLAW_TIMEOUT_SECONDS", getattr(config, "timeout_seconds", None)),
+            "http_base_url": getattr(config, "OPENCLAW_HTTP_BASE_URL", getattr(config, "http_base_url", None)),
+            "gateway_ws_url": getattr(config, "OPENCLAW_GATEWAY_WS_URL", getattr(config, "gateway_ws_url", None)),
             "gateway_url": getattr(config, "OPENCLAW_GATEWAY_URL", getattr(config, "gateway_url", None)),
             "auth_token": getattr(config, "OPENCLAW_AUTH_TOKEN", getattr(config, "auth_token", None)),
             "client_role": getattr(config, "OPENCLAW_CLIENT_ROLE", getattr(config, "client_role", None)),
@@ -257,9 +260,9 @@ class SylphosOpenClawBridge:
             logger.addHandler(handler)
         return logger
 
-    def _run_dry_request(self, request: OpenClawRequest, started_at: str) -> OpenClawResult:
+    def _run_dry_request(self, request: OpenClawRequest, started_at: str) -> OpenClawBridgeResult:
         action = self._build_dry_run_action(request)
-        return OpenClawResult(
+        return OpenClawBridgeResult(
             request_id=request.request_id,
             ok=True,
             status="dry_run",
@@ -285,11 +288,11 @@ class SylphosOpenClawBridge:
             "workspace": request.workspace,
         }
 
-    def _run_cli_request(self, request: OpenClawRequest, started: datetime, started_at: str) -> OpenClawResult:
+    def _run_cli_request(self, request: OpenClawRequest, started: datetime, started_at: str) -> OpenClawBridgeResult:
         command = self._build_cli_command(request)
         executable = shutil.which(command[0])
         if executable is None:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="failed",
@@ -319,7 +322,7 @@ class SylphosOpenClawBridge:
             stdout = completed.stdout
             stderr = completed.stderr
             parsed = self._parse_openclaw_output(stdout, stderr)
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=completed.returncode == 0,
                 status="success" if completed.returncode == 0 else "failed",
@@ -340,7 +343,7 @@ class SylphosOpenClawBridge:
             self._finish_result(result, started)
             return result
         except subprocess.TimeoutExpired as exc:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="timeout",
@@ -354,7 +357,7 @@ class SylphosOpenClawBridge:
             self.logger.warning("OpenClaw CLI timeout request_id=%s", request.request_id)
             return result
         except Exception as exc:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="failed",
@@ -368,7 +371,7 @@ class SylphosOpenClawBridge:
 
     def _run_http_gateway_request(
         self, request: OpenClawRequest, started: datetime, started_at: str
-    ) -> OpenClawResult:
+    ) -> OpenClawBridgeResult:
         settings = self._build_http_settings()
         client = self.agent_client or create_openclaw_client(settings)
         session_key = str(request.context.get("session_key") or settings.session_key)
@@ -385,7 +388,7 @@ class SylphosOpenClawBridge:
             metadata = dict(getattr(client_result, "metadata", {}) or {})
             text = getattr(client_result, "raw_text", None) or getattr(client_result, "spoken_text", None)
             spoken_text = getattr(client_result, "spoken_text", None)
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=True,
                 status=str(getattr(client_result, "status", "success") or "success"),
@@ -403,7 +406,7 @@ class SylphosOpenClawBridge:
             self._finish_result(result, started)
             return result
         except OpenClawTimeoutError as exc:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="timeout",
@@ -411,7 +414,7 @@ class SylphosOpenClawBridge:
                 started_at=started_at,
             )
         except (OpenClawAuthError, OpenClawConnectionError, OpenClawResponseError) as exc:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="failed",
@@ -419,7 +422,7 @@ class SylphosOpenClawBridge:
                 started_at=started_at,
             )
         except Exception as exc:
-            result = OpenClawResult(
+            result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=False,
                 status="failed",
@@ -430,8 +433,8 @@ class SylphosOpenClawBridge:
         self._finish_result(result, started)
         return result
 
-    def _run_websocket_request(self, request: OpenClawRequest, started_at: str) -> OpenClawResult:
-        return OpenClawResult(
+    def _run_websocket_request(self, request: OpenClawRequest, started_at: str) -> OpenClawBridgeResult:
+        return OpenClawBridgeResult(
             request_id=request.request_id,
             ok=False,
             status="failed",
@@ -443,18 +446,18 @@ class SylphosOpenClawBridge:
 
     def _build_http_settings(self) -> OpenClawSettings:
         settings = get_openclaw_settings()
-        explicit_gateway_url = os.getenv("OPENCLAW_GATEWAY_URL") or (
-            self.config.gateway_url if self.config.gateway_url != DEFAULT_OPENCLAW_GATEWAY_URL else None
-        )
-        base_url = self._gateway_url_as_http_base_url(explicit_gateway_url)
+        base_url = self.config.http_base_url or settings.base_url
+        if self.config.gateway_url and base_url == DEFAULT_OPENCLAW_HTTP_BASE_URL:
+            base_url = self._gateway_url_as_http_base_url(self.config.gateway_url) or base_url
         return replace(
             settings,
-            base_url=base_url or settings.base_url,
+            base_url=base_url,
             token=self.config.auth_token if self.config.auth_token is not None else settings.token,
             session_key=self.config.session_name or settings.session_key,
             timeout_seconds=self.config.timeout_seconds,
             max_spoken_chars=self.config.max_tts_chars,
         )
+
 
     @staticmethod
     def _gateway_url_as_http_base_url(gateway_url: str | None) -> str | None:
@@ -494,12 +497,12 @@ class SylphosOpenClawBridge:
             "commands_run": data.get("commands_run") if isinstance(data.get("commands_run"), list) else [],
         }
 
-    def _finish_result(self, result: OpenClawResult, started: datetime) -> None:
+    def _finish_result(self, result: OpenClawBridgeResult, started: datetime) -> None:
         finished = datetime.now(UTC)
         result.finished_at = finished.isoformat()
         result.duration_ms = _duration_ms(started, finished)
 
-    def _finalize_result(self, request: OpenClawRequest, result: OpenClawResult) -> None:
+    def _finalize_result(self, request: OpenClawRequest, result: OpenClawBridgeResult) -> None:
         if not result.speak_text:
             result.speak_text = self._make_speak_text(result)
         if result.ui_text is None:
@@ -514,7 +517,7 @@ class SylphosOpenClawBridge:
             result.duration_ms,
         )
 
-    def _make_speak_text(self, result: OpenClawResult) -> str:
+    def _make_speak_text(self, result: OpenClawBridgeResult) -> str:
         """Create short TTS-safe speech text from a structured OpenClaw result."""
 
         limit = max(1, self.config.max_tts_chars)
@@ -532,7 +535,7 @@ class SylphosOpenClawBridge:
             return text
         return "处理完成，详细结果已记录或显示。"
 
-    def _write_audit_log(self, request: OpenClawRequest, result: OpenClawResult) -> None:
+    def _write_audit_log(self, request: OpenClawRequest, result: OpenClawBridgeResult) -> None:
         summary = result.text or result.ui_text or result.error or result.status
         record = {
             "time": utc_now_iso(),
