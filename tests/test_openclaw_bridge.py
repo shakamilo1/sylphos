@@ -5,6 +5,7 @@ import json
 from sylphos.llm.openclaw_client import OpenClawTimeoutError
 from sylphos.llm.types import OpenClawResult as ClientOpenClawResult
 from sylphos.executor.openclaw_bridge import SylphosOpenClawBridge, classify_risk
+from sylphos.executor.openclaw_models import OpenClawRequest
 from sylphos.executor.openclaw_config import OpenClawBridgeConfig
 
 
@@ -44,6 +45,20 @@ def make_config(tmp_path, **overrides):
     }
     values.update(overrides)
     return OpenClawBridgeConfig(**values)
+
+
+def make_request(text="打开记事本", **overrides):
+    values = {
+        "request_id": "request-cli",
+        "source": "debug",
+        "text": text,
+        "context": {},
+        "workspace": None,
+        "dry_run": False,
+        "created_at": "2026-06-10T00:00:00+00:00",
+    }
+    values.update(overrides)
+    return OpenClawRequest(**values)
 
 
 def test_dry_run_writes_structured_result_and_audit(tmp_path):
@@ -185,3 +200,85 @@ def test_websocket_mode_is_explicit_placeholder(tmp_path):
     assert result.status == "failed"
     assert "WebSocket" in (result.error or "")
     assert bridge.health_check()["status"] == "not_implemented"
+
+
+def test_build_cli_command_uses_openclaw_agent_message_json_timeout(tmp_path):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, timeout_seconds=120))
+    request = make_request("打开记事本")
+
+    command = bridge._build_cli_command(request)
+
+    assert command[:4] == ["openclaw", "agent", "--message", "打开记事本"]
+    assert "--json" in command
+    assert command[command.index("--timeout") + 1] == "120"
+    assert "--deliver" not in command
+    assert "--local" not in command
+
+
+def test_build_cli_command_optional_local_deliver_agent_model(tmp_path):
+    bridge = SylphosOpenClawBridge(
+        make_config(
+            tmp_path,
+            cli_local=True,
+            cli_deliver=True,
+            cli_agent_id="agent-1",
+            cli_model="model-1",
+        )
+    )
+
+    command = bridge._build_cli_command(make_request())
+
+    assert "--local" in command
+    assert "--deliver" in command
+    assert command[command.index("--agent") + 1] == "agent-1"
+    assert command[command.index("--model") + 1] == "model-1"
+
+
+def test_build_cli_command_context_session_key_overrides_config(tmp_path):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, cli_session_key="config-session"))
+
+    command = bridge._build_cli_command(make_request(context={"session_key": "context-session"}))
+
+    assert command[command.index("--session-key") + 1] == "context-session"
+    assert "config-session" not in command
+
+
+def test_build_cli_command_uses_config_session_key_when_context_missing(tmp_path):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, cli_session_key="config-session"))
+
+    command = bridge._build_cli_command(make_request())
+
+    assert command[command.index("--session-key") + 1] == "config-session"
+
+
+def test_cli_json_stdout_spoken_text_maps_to_speak_text(tmp_path, monkeypatch):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=False, cli_path="openclaw"))
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "raw_text": "完整 CLI 回复",
+                "spoken_text": "短 CLI 语音",
+                "ui_text": "CLI UI 文本",
+                "status": "success",
+                "actions": [{"type": "cli"}],
+                "files_changed": ["cli.txt"],
+                "commands_run": [{"command": ["echo", "cli"]}],
+            },
+            ensure_ascii=False,
+        )
+        stderr = ""
+
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.shutil.which", lambda _: "/usr/bin/openclaw")
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.subprocess.run", lambda *args, **kwargs: Completed())
+
+    result = bridge.submit_text("查询当前状态", source="debug")
+
+    assert result.ok is True
+    assert result.text == "完整 CLI 回复"
+    assert result.speak_text == "短 CLI 语音"
+    assert result.ui_text == "CLI UI 文本"
+    assert result.actions == [{"type": "cli"}]
+    assert result.files_changed == ["cli.txt"]
+    assert result.commands_run[1] == {"command": ["echo", "cli"]}

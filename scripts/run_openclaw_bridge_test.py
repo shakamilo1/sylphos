@@ -59,6 +59,7 @@ def main() -> int:
             print(f"[confirmation] {result.confirmation_prompt}")
         print(f"[stdout] {_short(result.raw_stdout)}")
         print(f"[stderr] {_short(result.raw_stderr)}")
+        print(f"[commands] {_short(str(result.commands_run))}")
         print(f"[logs] sylphos={Path(config.sylphos_log_path)} audit={Path(config.audit_log_path)}")
 
 

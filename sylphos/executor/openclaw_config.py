@@ -20,6 +20,12 @@ OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket / ws
 OPENCLAW_DRY_RUN = True
 
 OPENCLAW_CLI_PATH = "openclaw"
+OPENCLAW_CLI_AGENT_ID = None
+OPENCLAW_CLI_MODEL = None
+OPENCLAW_CLI_SESSION_KEY = None
+OPENCLAW_CLI_LOCAL = False
+OPENCLAW_CLI_DELIVER = False
+OPENCLAW_CLI_JSON = True
 OPENCLAW_WORKSPACE = None
 OPENCLAW_TIMEOUT_SECONDS = 120
 
@@ -48,6 +54,12 @@ class OpenClawBridgeConfig:
     mode: str = OPENCLAW_MODE
     dry_run: bool = OPENCLAW_DRY_RUN
     cli_path: str = OPENCLAW_CLI_PATH
+    cli_agent_id: str | None = OPENCLAW_CLI_AGENT_ID
+    cli_model: str | None = OPENCLAW_CLI_MODEL
+    cli_session_key: str | None = OPENCLAW_CLI_SESSION_KEY
+    cli_local: bool = OPENCLAW_CLI_LOCAL
+    cli_deliver: bool = OPENCLAW_CLI_DELIVER
+    cli_json: bool = OPENCLAW_CLI_JSON
     workspace: str | None = OPENCLAW_WORKSPACE
     timeout_seconds: float = OPENCLAW_TIMEOUT_SECONDS
     http_base_url: str = OPENCLAW_HTTP_BASE_URL
@@ -112,6 +124,12 @@ def _load_local_overrides() -> dict[str, Any]:
         "OPENCLAW_MODE",
         "OPENCLAW_DRY_RUN",
         "OPENCLAW_CLI_PATH",
+        "OPENCLAW_CLI_AGENT_ID",
+        "OPENCLAW_CLI_MODEL",
+        "OPENCLAW_CLI_SESSION_KEY",
+        "OPENCLAW_CLI_LOCAL",
+        "OPENCLAW_CLI_DELIVER",
+        "OPENCLAW_CLI_JSON",
         "OPENCLAW_WORKSPACE",
         "OPENCLAW_TIMEOUT_SECONDS",
         "OPENCLAW_HTTP_BASE_URL",
@@ -135,6 +153,12 @@ _LOCAL_NAME_TO_FIELD = {
     "OPENCLAW_MODE": "mode",
     "OPENCLAW_DRY_RUN": "dry_run",
     "OPENCLAW_CLI_PATH": "cli_path",
+    "OPENCLAW_CLI_AGENT_ID": "cli_agent_id",
+    "OPENCLAW_CLI_MODEL": "cli_model",
+    "OPENCLAW_CLI_SESSION_KEY": "cli_session_key",
+    "OPENCLAW_CLI_LOCAL": "cli_local",
+    "OPENCLAW_CLI_DELIVER": "cli_deliver",
+    "OPENCLAW_CLI_JSON": "cli_json",
     "OPENCLAW_WORKSPACE": "workspace",
     "OPENCLAW_TIMEOUT_SECONDS": "timeout_seconds",
     "OPENCLAW_HTTP_BASE_URL": "http_base_url",
@@ -160,6 +184,12 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
         "mode": OPENCLAW_MODE,
         "dry_run": OPENCLAW_DRY_RUN,
         "cli_path": OPENCLAW_CLI_PATH,
+        "cli_agent_id": OPENCLAW_CLI_AGENT_ID,
+        "cli_model": OPENCLAW_CLI_MODEL,
+        "cli_session_key": OPENCLAW_CLI_SESSION_KEY,
+        "cli_local": OPENCLAW_CLI_LOCAL,
+        "cli_deliver": OPENCLAW_CLI_DELIVER,
+        "cli_json": OPENCLAW_CLI_JSON,
         "workspace": OPENCLAW_WORKSPACE,
         "timeout_seconds": OPENCLAW_TIMEOUT_SECONDS,
         "http_base_url": OPENCLAW_HTTP_BASE_URL,
@@ -185,6 +215,12 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
             "mode": os.getenv("OPENCLAW_MODE", values["mode"]),
             "dry_run": _env_bool("OPENCLAW_DRY_RUN", bool(values["dry_run"])),
             "cli_path": os.getenv("OPENCLAW_CLI_PATH", str(values["cli_path"])),
+            "cli_agent_id": _optional_text("OPENCLAW_CLI_AGENT_ID", values["cli_agent_id"]),
+            "cli_model": _optional_text("OPENCLAW_CLI_MODEL", values["cli_model"]),
+            "cli_session_key": _optional_text("OPENCLAW_CLI_SESSION_KEY", values["cli_session_key"]),
+            "cli_local": _env_bool("OPENCLAW_CLI_LOCAL", bool(values["cli_local"])),
+            "cli_deliver": _env_bool("OPENCLAW_CLI_DELIVER", bool(values["cli_deliver"])),
+            "cli_json": _env_bool("OPENCLAW_CLI_JSON", bool(values["cli_json"])),
             "workspace": _optional_text("OPENCLAW_WORKSPACE", values["workspace"]),
             "timeout_seconds": _env_float("OPENCLAW_TIMEOUT_SECONDS", float(values["timeout_seconds"])),
             "http_base_url": os.getenv("OPENCLAW_HTTP_BASE_URL", str(values["http_base_url"])),

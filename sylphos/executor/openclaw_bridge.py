@@ -232,6 +232,12 @@ class SylphosOpenClawBridge:
             "mode": getattr(config, "OPENCLAW_MODE", getattr(config, "mode", None)),
             "dry_run": getattr(config, "OPENCLAW_DRY_RUN", getattr(config, "dry_run", None)),
             "cli_path": getattr(config, "OPENCLAW_CLI_PATH", getattr(config, "cli_path", None)),
+            "cli_agent_id": getattr(config, "OPENCLAW_CLI_AGENT_ID", getattr(config, "cli_agent_id", None)),
+            "cli_model": getattr(config, "OPENCLAW_CLI_MODEL", getattr(config, "cli_model", None)),
+            "cli_session_key": getattr(config, "OPENCLAW_CLI_SESSION_KEY", getattr(config, "cli_session_key", None)),
+            "cli_local": getattr(config, "OPENCLAW_CLI_LOCAL", getattr(config, "cli_local", None)),
+            "cli_deliver": getattr(config, "OPENCLAW_CLI_DELIVER", getattr(config, "cli_deliver", None)),
+            "cli_json": getattr(config, "OPENCLAW_CLI_JSON", getattr(config, "cli_json", None)),
             "workspace": getattr(config, "OPENCLAW_WORKSPACE", getattr(config, "workspace", None)),
             "timeout_seconds": getattr(config, "OPENCLAW_TIMEOUT_SECONDS", getattr(config, "timeout_seconds", None)),
             "http_base_url": getattr(config, "OPENCLAW_HTTP_BASE_URL", getattr(config, "http_base_url", None)),
@@ -325,8 +331,9 @@ class SylphosOpenClawBridge:
             result = OpenClawBridgeResult(
                 request_id=request.request_id,
                 ok=completed.returncode == 0,
-                status="success" if completed.returncode == 0 else "failed",
+                status=parsed["status"] or ("success" if completed.returncode == 0 else "failed"),
                 text=parsed["text"],
+                speak_text=parsed.get("speak_text"),
                 ui_text=parsed["ui_text"],
                 actions=parsed["actions"],
                 files_changed=parsed["files_changed"],
@@ -337,7 +344,7 @@ class SylphosOpenClawBridge:
                 raw_stdout=stdout if self.config.log_raw_output else None,
                 raw_stderr=stderr if self.config.log_raw_output else None,
                 exit_code=completed.returncode,
-                error=None if completed.returncode == 0 else (stderr.strip() or "OpenClaw CLI exited with a non-zero code."),
+                error=parsed.get("error") if completed.returncode == 0 else (parsed.get("error") or stderr.strip() or "OpenClaw CLI exited with a non-zero code."),
                 started_at=started_at,
             )
             self._finish_result(result, started)
@@ -470,9 +477,31 @@ class SylphosOpenClawBridge:
         return gateway_url
 
     def _build_cli_command(self, request: OpenClawRequest) -> list[str]:
-        """Build the OpenClaw CLI command in one place for future real-world tuning."""
+        """Build the OpenClaw CLI agent command for a single natural-language turn."""
 
-        return [self.config.cli_path, request.text]
+        timeout_seconds = max(1, int(self.config.timeout_seconds))
+        command = [
+            self.config.cli_path,
+            "agent",
+            "--message",
+            request.text,
+        ]
+        if self.config.cli_json:
+            command.append("--json")
+        command.extend(["--timeout", str(timeout_seconds)])
+
+        session_key = request.context.get("session_key") or self.config.cli_session_key
+        if session_key:
+            command.extend(["--session-key", str(session_key)])
+        if self.config.cli_agent_id:
+            command.extend(["--agent", self.config.cli_agent_id])
+        if self.config.cli_model:
+            command.extend(["--model", self.config.cli_model])
+        if self.config.cli_local is True:
+            command.append("--local")
+        if self.config.cli_deliver is True:
+            command.append("--deliver")
+        return command
 
     def _parse_openclaw_output(self, stdout: str | None, stderr: str | None) -> dict[str, Any]:
         stdout = stdout or ""
@@ -487,14 +516,26 @@ class SylphosOpenClawBridge:
             except json.JSONDecodeError:
                 data = {}
 
-        text = data.get("text") or data.get("message") or data.get("summary") or stripped or stderr.strip() or None
+        text = (
+            data.get("text")
+            or data.get("message")
+            or data.get("summary")
+            or data.get("raw_text")
+            or stripped
+            or stderr.strip()
+            or None
+        )
+        speak_text = data.get("spoken_text") or data.get("speak_text")
         ui_text = data.get("ui_text") or text
         return {
             "text": text,
+            "speak_text": speak_text if isinstance(speak_text, str) else None,
             "ui_text": _clip(ui_text, self.config.max_ui_chars),
             "actions": data.get("actions") if isinstance(data.get("actions"), list) else [],
             "files_changed": data.get("files_changed") if isinstance(data.get("files_changed"), list) else [],
             "commands_run": data.get("commands_run") if isinstance(data.get("commands_run"), list) else [],
+            "status": data.get("status") if isinstance(data.get("status"), str) else None,
+            "error": data.get("error") if isinstance(data.get("error"), str) else None,
         }
 
     def _finish_result(self, result: OpenClawBridgeResult, started: datetime) -> None:
