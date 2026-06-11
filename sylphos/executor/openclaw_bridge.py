@@ -395,12 +395,14 @@ class SylphosOpenClawBridge:
             metadata = dict(getattr(client_result, "metadata", {}) or {})
             text = getattr(client_result, "raw_text", None) or getattr(client_result, "spoken_text", None)
             spoken_text = getattr(client_result, "spoken_text", None)
+            status = str(getattr(client_result, "status", "success") or "success")
+            ok = self._is_success_status(status)
             result = OpenClawBridgeResult(
                 request_id=request.request_id,
-                ok=True,
-                status=str(getattr(client_result, "status", "success") or "success"),
+                ok=ok,
+                status=status,
                 text=text,
-                speak_text=spoken_text,
+                speak_text=spoken_text if ok else None,
                 ui_text=_clip(text, self.config.max_ui_chars),
                 actions=metadata.get("actions") if isinstance(metadata.get("actions"), list) else [],
                 files_changed=metadata.get("files_changed") if isinstance(metadata.get("files_changed"), list) else [],
@@ -408,6 +410,7 @@ class SylphosOpenClawBridge:
                 raw_stdout=text if self.config.log_raw_output else None,
                 raw_stderr=None,
                 exit_code=None,
+                error=None if ok else str(metadata.get("error") or text or f"OpenClaw client returned status: {status}"),
                 started_at=started_at,
             )
             self._finish_result(result, started)
@@ -439,6 +442,10 @@ class SylphosOpenClawBridge:
             self.logger.exception("OpenClaw Gateway unexpected error request_id=%s", request.request_id)
         self._finish_result(result, started)
         return result
+
+    @staticmethod
+    def _is_success_status(status: str) -> bool:
+        return status.strip().lower() in {"ok", "success", "completed"}
 
     def _run_websocket_request(self, request: OpenClawRequest, started_at: str) -> OpenClawBridgeResult:
         return OpenClawBridgeResult(

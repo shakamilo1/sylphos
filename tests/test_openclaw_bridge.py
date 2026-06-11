@@ -157,6 +157,27 @@ def test_gateway_mode_reuses_existing_openclaw_client_result(tmp_path):
     assert client.calls == [("查询当前状态", "session-1")]
 
 
+def test_gateway_non_success_client_status_marks_bridge_result_failed(tmp_path):
+    client = FakeAgentClient(
+        ClientOpenClawResult(
+            raw_text="Gateway reported a failure",
+            spoken_text="失败语音不应直接复用",
+            session_key="sylphos",
+            model="openclaw",
+            status="failed",
+            metadata={"error": "tool failed"},
+        )
+    )
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=False, mode="gateway"), agent_client=client)
+
+    result = bridge.submit_text("查询当前状态", source="debug")
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert result.error == "tool failed"
+    assert result.speak_text.startswith("OpenClaw 执行失败")
+
+
 def test_gateway_timeout_maps_to_structured_timeout(tmp_path):
     client = FakeAgentClient(OpenClawTimeoutError("timed out"))
     bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=False, mode="http"), agent_client=client)
