@@ -308,6 +308,8 @@ class SylphosOpenClawBridge:
             self._finish_result(result, started)
             return result
 
+        command[0] = executable
+
         cwd = request.workspace if request.workspace else None
         self.logger.info(
             "Executing OpenClaw CLI request_id=%s command=%s cwd=%s timeout=%s",
@@ -322,6 +324,8 @@ class SylphosOpenClawBridge:
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.config.timeout_seconds,
                 check=False,
             )
@@ -523,17 +527,28 @@ class SylphosOpenClawBridge:
             except json.JSONDecodeError:
                 data = {}
 
+        payload_text = None
+        result = data.get("result")
+        payloads = result.get("payloads") if isinstance(result, dict) else None
+        if isinstance(payloads, list) and payloads:
+            first_payload = payloads[0]
+            if isinstance(first_payload, dict) and isinstance(first_payload.get("text"), str):
+                payload_text = first_payload["text"]
+
         text = (
-            data.get("text")
+            payload_text
+            or data.get("raw_text")
+            or data.get("spoken_text")
+            or data.get("speak_text")
+            or data.get("text")
             or data.get("message")
             or data.get("summary")
-            or data.get("raw_text")
             or stripped
             or stderr.strip()
             or None
         )
-        speak_text = data.get("spoken_text") or data.get("speak_text")
-        ui_text = data.get("ui_text") or text
+        speak_text = payload_text or data.get("spoken_text") or data.get("speak_text") or data.get("text") or data.get("summary")
+        ui_text = payload_text or data.get("ui_text") or text
         return {
             "text": text,
             "speak_text": speak_text if isinstance(speak_text, str) else None,
