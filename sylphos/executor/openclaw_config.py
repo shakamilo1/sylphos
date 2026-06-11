@@ -20,6 +20,10 @@ OPENCLAW_MODE = "cli"  # cli / http / gateway / websocket / ws
 OPENCLAW_DRY_RUN = True
 
 OPENCLAW_CLI_PATH = "openclaw"
+# Runtime-friendly aliases. Prefer OPENCLAW_CLI_PATH / OPENCLAW_WORKSPACE /
+# OPENCLAW_HTTP_BASE_URL / OPENCLAW_GATEWAY_WS_URL / OPENCLAW_AUTH_TOKEN in
+# OpenClaw bridge code, but accept the shorter names requested by Runtime users.
+OPENCLAW_CLI = OPENCLAW_CLI_PATH
 OPENCLAW_CLI_AGENT_ID = None
 OPENCLAW_CLI_MODEL = None
 OPENCLAW_CLI_SESSION_KEY = None
@@ -27,14 +31,18 @@ OPENCLAW_CLI_LOCAL = False
 OPENCLAW_CLI_DELIVER = False
 OPENCLAW_CLI_JSON = True
 OPENCLAW_WORKSPACE = None
+OPENCLAW_WORKDIR = OPENCLAW_WORKSPACE
 OPENCLAW_TIMEOUT_SECONDS = 120
 
 OPENCLAW_HTTP_BASE_URL = "http://127.0.0.1:18789"
+OPENCLAW_API_URL = OPENCLAW_HTTP_BASE_URL
 OPENCLAW_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
+OPENCLAW_WS_URL = OPENCLAW_GATEWAY_WS_URL
 # Deprecated compatibility alias for early PR #19 drafts. Prefer the two
 # transport-specific settings above.
 OPENCLAW_GATEWAY_URL = None
 OPENCLAW_AUTH_TOKEN = None
+OPENCLAW_TOKEN = OPENCLAW_AUTH_TOKEN
 OPENCLAW_CLIENT_ROLE = "operator"
 OPENCLAW_SESSION_NAME = "sylphos"
 
@@ -115,15 +123,20 @@ def _gateway_url_to_http_base_url(gateway_url: str | None) -> str | None:
 
 
 def _load_local_overrides() -> dict[str, Any]:
-    spec = importlib.util.find_spec("sylphos.config.local_config")
-    if spec is None:
+    module = None
+    for module_name in ("sylphos.config.local_config", "local_config"):
+        spec = importlib.util.find_spec(module_name)
+        if spec is not None:
+            module = importlib.import_module(module_name)
+            break
+    if module is None:
         return {}
-    module = importlib.import_module("sylphos.config.local_config")
     names = {
         "TOOL_PROVIDER",
         "OPENCLAW_MODE",
         "OPENCLAW_DRY_RUN",
         "OPENCLAW_CLI_PATH",
+        "OPENCLAW_CLI",
         "OPENCLAW_CLI_AGENT_ID",
         "OPENCLAW_CLI_MODEL",
         "OPENCLAW_CLI_SESSION_KEY",
@@ -131,11 +144,15 @@ def _load_local_overrides() -> dict[str, Any]:
         "OPENCLAW_CLI_DELIVER",
         "OPENCLAW_CLI_JSON",
         "OPENCLAW_WORKSPACE",
+        "OPENCLAW_WORKDIR",
         "OPENCLAW_TIMEOUT_SECONDS",
         "OPENCLAW_HTTP_BASE_URL",
+        "OPENCLAW_API_URL",
         "OPENCLAW_GATEWAY_WS_URL",
+        "OPENCLAW_WS_URL",
         "OPENCLAW_GATEWAY_URL",
         "OPENCLAW_AUTH_TOKEN",
+        "OPENCLAW_TOKEN",
         "OPENCLAW_CLIENT_ROLE",
         "OPENCLAW_SESSION_NAME",
         "OPENCLAW_LOG_RAW_OUTPUT",
@@ -153,6 +170,7 @@ _LOCAL_NAME_TO_FIELD = {
     "OPENCLAW_MODE": "mode",
     "OPENCLAW_DRY_RUN": "dry_run",
     "OPENCLAW_CLI_PATH": "cli_path",
+    "OPENCLAW_CLI": "cli_path",
     "OPENCLAW_CLI_AGENT_ID": "cli_agent_id",
     "OPENCLAW_CLI_MODEL": "cli_model",
     "OPENCLAW_CLI_SESSION_KEY": "cli_session_key",
@@ -160,11 +178,15 @@ _LOCAL_NAME_TO_FIELD = {
     "OPENCLAW_CLI_DELIVER": "cli_deliver",
     "OPENCLAW_CLI_JSON": "cli_json",
     "OPENCLAW_WORKSPACE": "workspace",
+    "OPENCLAW_WORKDIR": "workspace",
     "OPENCLAW_TIMEOUT_SECONDS": "timeout_seconds",
     "OPENCLAW_HTTP_BASE_URL": "http_base_url",
+    "OPENCLAW_API_URL": "http_base_url",
     "OPENCLAW_GATEWAY_WS_URL": "gateway_ws_url",
+    "OPENCLAW_WS_URL": "gateway_ws_url",
     "OPENCLAW_GATEWAY_URL": "gateway_url",
     "OPENCLAW_AUTH_TOKEN": "auth_token",
+    "OPENCLAW_TOKEN": "auth_token",
     "OPENCLAW_CLIENT_ROLE": "client_role",
     "OPENCLAW_SESSION_NAME": "session_name",
     "OPENCLAW_LOG_RAW_OUTPUT": "log_raw_output",
@@ -214,19 +236,19 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
             "tool_provider": os.getenv("TOOL_PROVIDER", values["tool_provider"]),
             "mode": os.getenv("OPENCLAW_MODE", values["mode"]),
             "dry_run": _env_bool("OPENCLAW_DRY_RUN", bool(values["dry_run"])),
-            "cli_path": os.getenv("OPENCLAW_CLI_PATH", str(values["cli_path"])),
+            "cli_path": os.getenv("OPENCLAW_CLI_PATH", os.getenv("OPENCLAW_CLI", str(values["cli_path"]))),
             "cli_agent_id": _optional_text("OPENCLAW_CLI_AGENT_ID", values["cli_agent_id"]),
             "cli_model": _optional_text("OPENCLAW_CLI_MODEL", values["cli_model"]),
             "cli_session_key": _optional_text("OPENCLAW_CLI_SESSION_KEY", values["cli_session_key"]),
             "cli_local": _env_bool("OPENCLAW_CLI_LOCAL", bool(values["cli_local"])),
             "cli_deliver": _env_bool("OPENCLAW_CLI_DELIVER", bool(values["cli_deliver"])),
             "cli_json": _env_bool("OPENCLAW_CLI_JSON", bool(values["cli_json"])),
-            "workspace": _optional_text("OPENCLAW_WORKSPACE", values["workspace"]),
+            "workspace": _optional_text("OPENCLAW_WORKSPACE", _optional_text("OPENCLAW_WORKDIR", values["workspace"])),
             "timeout_seconds": _env_float("OPENCLAW_TIMEOUT_SECONDS", float(values["timeout_seconds"])),
-            "http_base_url": os.getenv("OPENCLAW_HTTP_BASE_URL", str(values["http_base_url"])),
-            "gateway_ws_url": os.getenv("OPENCLAW_GATEWAY_WS_URL", str(values["gateway_ws_url"])),
+            "http_base_url": os.getenv("OPENCLAW_HTTP_BASE_URL", os.getenv("OPENCLAW_API_URL", str(values["http_base_url"]))),
+            "gateway_ws_url": os.getenv("OPENCLAW_GATEWAY_WS_URL", os.getenv("OPENCLAW_WS_URL", str(values["gateway_ws_url"]))),
             "gateway_url": _optional_text("OPENCLAW_GATEWAY_URL", values["gateway_url"]),
-            "auth_token": _optional_text("OPENCLAW_AUTH_TOKEN", values["auth_token"]),
+            "auth_token": _optional_text("OPENCLAW_AUTH_TOKEN", _optional_text("OPENCLAW_TOKEN", values["auth_token"])),
             "client_role": os.getenv("OPENCLAW_CLIENT_ROLE", str(values["client_role"])),
             "session_name": os.getenv("OPENCLAW_SESSION_NAME", str(values["session_name"])),
             "log_raw_output": _env_bool("OPENCLAW_LOG_RAW_OUTPUT", bool(values["log_raw_output"])),

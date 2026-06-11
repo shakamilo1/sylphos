@@ -10,11 +10,12 @@ except Exception:
     _HAS_RICH = False
 
 from sylphos.config.loader import load_config
-from sylphos.executor.openclaw_executor import DummyExecutor, OpenClawExecutor
+from sylphos.executor.openclaw_config import load_openclaw_bridge_config
+from sylphos.executor.openclaw_executor import DummyExecutor, OpenClawApiExecutor, OpenClawCliExecutor, OpenClawExecutor, OpenClawWebSocketExecutor
 from sylphos.frontend.console_feedback import ConsoleFeedback
 from sylphos.runtime.context import RuntimeContext
 from sylphos.runtime.event_bus import EventBus
-from sylphos.runtime.orchestrator import RuntimeOrchestrator
+from sylphos.runtime.orchestrator import RuntimeOrchestrator, SimpleRouter
 from sylphos.runtime.registry import RuntimeRegistry
 from sylphos.runtime.stt_handler import STTHandler
 from sylphos.runtime.tts_handler import TTSHandler
@@ -61,11 +62,11 @@ class RuntimeApp:
         self.registry.register("tts", TTSHandler(event_bus=self.event_bus, engine=tts_engine))
 
         self.registry.register_executor("dummy", DummyExecutor())
-        self.registry.register_executor("openclaw", OpenClawExecutor(
-            cli=getattr(self.config, "OPENCLAW_CLI", "openclaw"),
-            timeout_seconds=int(getattr(self.config, "OPENCLAW_TIMEOUT_SECONDS", 60)),
-            dry_run=bool(getattr(self.config, "OPENCLAW_DRY_RUN", True)),
-        ))
+        openclaw_config = load_openclaw_bridge_config()
+        self.registry.register_executor("openclaw", OpenClawExecutor(config=openclaw_config))
+        self.registry.register_executor("openclaw_cli", OpenClawCliExecutor(config=openclaw_config))
+        self.registry.register_executor("openclaw_api", OpenClawApiExecutor(config=openclaw_config))
+        self.registry.register_executor("openclaw_websocket", OpenClawWebSocketExecutor(config=openclaw_config))
         self.registry.register("console_feedback", ConsoleFeedback(self.event_bus))
         self.orchestrator = self.registry.register("orchestrator", RuntimeOrchestrator(
             event_bus=self.event_bus,
@@ -73,6 +74,7 @@ class RuntimeApp:
             registry=self.registry,
             config=self.config,
             post_processors=build_post_processors(self.config),
+            router=SimpleRouter(default_tool=getattr(self.config, "TOOL_EXECUTOR_PROVIDER", "dummy")),
         ))
         return self
 

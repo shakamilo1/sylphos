@@ -17,13 +17,16 @@ from sylphos.runtime.state import RuntimeState
 
 
 class SimpleRouter:
+    def __init__(self, default_tool: str = "dummy") -> None:
+        self.default_tool = default_tool or "dummy"
+
     def route(self, text: str) -> ToolExecutionRequested:
         command = text.strip()
         simple = ("打开浏览器", "打开记事本", "查看当前目录")
         if command in simple or command.startswith("打开") or command.startswith("查看"):
-            return ToolExecutionRequested("openclaw", {"command": command}, text=command)
+            return ToolExecutionRequested(self.default_tool, {"command": command}, text=command)
         plan = {"type": "dummy_llm_plan", "command": command}
-        return ToolExecutionRequested("openclaw", {"command": command, "plan": plan}, text=command, source="dummy_planner")
+        return ToolExecutionRequested(self.default_tool, {"command": command, "plan": plan}, text=command, source="dummy_planner")
 
 
 class RuntimeOrchestrator:
@@ -128,8 +131,11 @@ class RuntimeOrchestrator:
             result = executor.execute(event, self.context)
             self.event_bus.publish(ToolExecutionCompleted(tool_name, result))
         except Exception as exc:
-            self.logger.exception("Tool execution failed")
-            self.event_bus.publish(ToolExecutionFailed(tool_name, str(exc)))
+            if hasattr(exc, "result"):
+                self.logger.error("Tool execution failed: %s", exc)
+            else:
+                self.logger.exception("Tool execution failed")
+            self.event_bus.publish(ToolExecutionFailed(tool_name, str(exc), result=getattr(exc, "result", {})))
 
     def _on_tool_execution_completed(self, event):
         self._mark(event, "tool_execution_completed")
@@ -151,7 +157,8 @@ class RuntimeOrchestrator:
         try:
             self._set_state(RuntimeState.ERROR, "error")
             self.event_bus.publish(UIMessageRequested(f"错误：{getattr(event, 'error', '')}", level="error"))
-            self.event_bus.publish(TTSRequested(getattr(self.config, "TTS_ON_FAILED", "执行失败，请查看文本结果")))
+            if getattr(event, "source", "") != "tts":
+                self.event_bus.publish(TTSRequested(getattr(self.config, "TTS_ON_FAILED", "执行失败，请查看文本结果")))
             self._set_state(RuntimeState.WAKEWORD_LISTENING, "wakeword_listening")
             self.event_bus.publish(ResumeWakeWordRequested())
         finally:

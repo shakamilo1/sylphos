@@ -159,7 +159,7 @@ class SylphosOpenClawBridge:
 
         if self.config.mode == "cli":
             result = self._run_cli_request(request, started, started_at)
-        elif self.config.mode in {"http", "gateway"}:
+        elif self.config.mode in {"http", "api", "gateway"}:
             result = self._run_http_gateway_request(request, started, started_at)
         elif self.config.mode in {"websocket", "ws"}:
             result = self._run_websocket_request(request, started_at)
