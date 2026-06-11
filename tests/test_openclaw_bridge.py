@@ -316,3 +316,35 @@ def test_cli_json_stdout_spoken_text_maps_to_speak_text(tmp_path, monkeypatch):
     assert result.actions == [{"type": "cli"}]
     assert result.files_changed == ["cli.txt"]
     assert result.commands_run[1] == {"command": ["echo", "cli"]}
+
+
+def test_cli_json_stdout_payload_text_takes_priority_over_summary(tmp_path, monkeypatch):
+    bridge = SylphosOpenClawBridge(make_config(tmp_path, dry_run=False, cli_path="openclaw"))
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "runId": "run-1",
+                "status": "ok",
+                "summary": "completed",
+                "result": {
+                    "payloads": [
+                        {"text": "Sylphos Bridge 已连接 OpenClaw。", "mediaUrl": None},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+        stderr = ""
+
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.shutil.which", lambda _: "/usr/bin/openclaw")
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.subprocess.run", lambda *args, **kwargs: Completed())
+
+    result = bridge.submit_text("请只回复一句话：Sylphos Bridge 已连接 OpenClaw。", source="debug")
+
+    assert result.ok is True
+    assert result.status == "ok"
+    assert result.text == "Sylphos Bridge 已连接 OpenClaw。"
+    assert result.speak_text == "Sylphos Bridge 已连接 OpenClaw。"
+    assert result.ui_text == "Sylphos Bridge 已连接 OpenClaw。"
