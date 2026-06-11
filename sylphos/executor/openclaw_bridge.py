@@ -308,6 +308,8 @@ class SylphosOpenClawBridge:
             self._finish_result(result, started)
             return result
 
+        command[0] = executable
+
         cwd = request.workspace if request.workspace else None
         self.logger.info(
             "Executing OpenClaw CLI request_id=%s command=%s cwd=%s timeout=%s",
@@ -322,6 +324,8 @@ class SylphosOpenClawBridge:
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.config.timeout_seconds,
                 check=False,
             )

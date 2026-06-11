@@ -291,11 +291,24 @@ def test_cli_json_stdout_spoken_text_maps_to_speak_text(tmp_path, monkeypatch):
         )
         stderr = ""
 
-    monkeypatch.setattr("sylphos.executor.openclaw_bridge.shutil.which", lambda _: "/usr/bin/openclaw")
-    monkeypatch.setattr("sylphos.executor.openclaw_bridge.subprocess.run", lambda *args, **kwargs: Completed())
+    resolved_path = r"C:\Users\x\AppData\Roaming\npm\openclaw.cmd"
+    run_calls = []
+
+    def fake_run(command, **kwargs):
+        run_calls.append((command, kwargs))
+        return Completed()
+
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.shutil.which", lambda _: resolved_path)
+    monkeypatch.setattr("sylphos.executor.openclaw_bridge.subprocess.run", fake_run)
 
     result = bridge.submit_text("查询当前状态", source="debug")
 
+    assert run_calls
+    run_command, run_kwargs = run_calls[0]
+    assert run_command[0] == resolved_path
+    assert run_command[0] != "openclaw"
+    assert run_kwargs["encoding"] == "utf-8"
+    assert run_kwargs["errors"] == "replace"
     assert result.ok is True
     assert result.text == "完整 CLI 回复"
     assert result.speak_text == "短 CLI 语音"
