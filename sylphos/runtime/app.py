@@ -1,95 +1,101 @@
-# sylphos/runtime/app.py
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import asdict, is_dataclass
 
 try:
     from rich.logging import RichHandler
-
     _HAS_RICH = True
 except Exception:
     _HAS_RICH = False
 
-from sylphos.mcp.core import demo_run_once
-from sylphos.runtime.events import EventBus
-
-
-@dataclass
-class RuntimeConfig:
-    """Sylphos 运行时的基础配置（后续可以慢慢扩展）."""
-
-    name: str = "Sylphos"
-    version: str = "0.2.0"
-    log_level: int = logging.INFO
-
-
-class RuntimeApp:
-    """Sylphos Runtime 的轻量总线骨架。"""
-
-    def __init__(self, config: Optional[RuntimeConfig] = None) -> None:
-        self.config = config or RuntimeConfig()
-        self.log = logging.getLogger("sylphos.runtime")
-        self.event_bus = EventBus()
-        self._started = False
-
-    def start(self) -> None:
-        """启动运行时（当前版本：日志 + EventBus + MCP demo）."""
-        if self._started:
-            self.log.warning("Runtime already started")
-            return
-
-        self.log.info("Starting %s runtime v%s", self.config.name, self.config.version)
-        self.log.info("Runtime EventBus ready")
-        self.log.info("Running MCP demo roundtrip ...")
-        self._demo_mcp_roundtrip()
-        self._started = True
-
-    def _demo_mcp_roundtrip(self) -> None:
-        """调用 sylphos.mcp.core.demo_run_once 并打印结果."""
-        resp = demo_run_once()
-        self.log.info("MCP demo response: %r", resp)
-
-    def run_forever(self) -> None:
-        self.log.info("Entering main loop. Press Ctrl+C to exit.")
-        try:
-            while True:
-                time.sleep(1.0)
-        except KeyboardInterrupt:
-            self.log.info("KeyboardInterrupt received, shutting down ...")
-            self.shutdown()
-
-    def shutdown(self) -> None:
-        self._started = False
-        self.log.info("Runtime shutdown complete.")
+from sylphos.config.loader import load_config
+from sylphos.executor.openclaw_executor import DummyExecutor, OpenClawExecutor
+from sylphos.frontend.console_feedback import ConsoleFeedback
+from sylphos.runtime.context import RuntimeContext
+from sylphos.runtime.event_bus import EventBus
+from sylphos.runtime.orchestrator import RuntimeOrchestrator
+from sylphos.runtime.registry import RuntimeRegistry
+from sylphos.runtime.stt_handler import STTHandler
+from sylphos.runtime.tts_handler import TTSHandler
+from sylphos.voice.audio.hub import AudioHubAdapter
+from sylphos.voice.audio.recorder import RecorderService
+from sylphos.voice.stt import DummySTT, SenseVoiceRuntimeAdapter, build_post_processors
+from sylphos.voice.tts import CosyVoiceClient, DummyTTS
+from sylphos.voice.wakeword.openwakeword_engine import OpenWakeWordEngineAdapter
 
 
 def configure_logging(level: int = logging.INFO) -> None:
-    """配置基础日志输出格式."""
     if _HAS_RICH:
-        logging.basicConfig(
-            level=level,
-            format="%(message)s",
-            datefmt="[%X]",
-            handlers=[RichHandler(rich_tracebacks=True)],
-        )
+        logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(rich_tracebacks=True)])
     else:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        )
+        logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 
-def main() -> None:
-    config = RuntimeConfig()
-    configure_logging(config.log_level)
+class RuntimeApp:
+    def __init__(self, config=None) -> None:
+        self.config = config or load_config()
+        self.event_bus = EventBus()
+        self.context = RuntimeContext()
+        self.registry = RuntimeRegistry()
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.orchestrator = None
 
-    app = RuntimeApp(config=config)
-    app.start()
-    app.run_forever()
+    def build(self) -> "RuntimeApp":
+        audio = self.registry.register("audio_hub", AudioHubAdapter(
+            enabled=bool(getattr(self.config, "AUDIO_ENABLED", False)),
+            device=getattr(self.config, "AUDIO_DEVICE", None),
+            samplerate=int(getattr(self.config, "AUDIO_SAMPLE_RATE", 44100)),
+            channels=int(getattr(self.config, "AUDIO_CHANNELS", 1)),
+            blocksize=int(getattr(self.config, "AUDIO_BLOCKSIZE", 4410)),
+        ))
+        self.registry.register("wakeword", OpenWakeWordEngineAdapter(self.event_bus, audio_hub=audio, enabled=bool(getattr(self.config, "AUDIO_ENABLED", False))))
+        self.registry.register("recorder", RecorderService(self.event_bus, audio_hub=audio, samplerate=int(getattr(self.config, "AUDIO_SAMPLE_RATE", 44100))))
 
+        stt_provider = getattr(self.config, "STT_PROVIDER", "dummy")
+        stt_engine = DummySTT(getattr(self.config, "DUMMY_STT_TEXT", "打开浏览器")) if stt_provider == "dummy" else SenseVoiceRuntimeAdapter(provider=stt_provider)
+        self.registry.register("stt", STTHandler(event_bus=self.event_bus, context=self.context, engine=stt_engine))
 
-if __name__ == "__main__":
-    main()
+        tts_provider = getattr(self.config, "TTS_PROVIDER", "dummy")
+        tts_engine = DummyTTS() if tts_provider == "dummy" else CosyVoiceClient(base_url=getattr(self.config, "COSYVOICE_URL", "http://127.0.0.1:8000"))
+        self.registry.register("tts", TTSHandler(event_bus=self.event_bus, engine=tts_engine))
+
+        self.registry.register_executor("dummy", DummyExecutor())
+        self.registry.register_executor("openclaw", OpenClawExecutor(
+            cli=getattr(self.config, "OPENCLAW_CLI", "openclaw"),
+            timeout_seconds=int(getattr(self.config, "OPENCLAW_TIMEOUT_SECONDS", 60)),
+            dry_run=bool(getattr(self.config, "OPENCLAW_DRY_RUN", True)),
+        ))
+        self.registry.register("console_feedback", ConsoleFeedback(self.event_bus))
+        self.orchestrator = self.registry.register("orchestrator", RuntimeOrchestrator(
+            event_bus=self.event_bus,
+            context=self.context,
+            registry=self.registry,
+            config=self.config,
+            post_processors=build_post_processors(self.config),
+        ))
+        return self
+
+    def start(self) -> None:
+        if self.orchestrator is None:
+            self.build()
+        for name, module in list(self.registry.modules.items()):
+            if name == "audio_hub":
+                continue
+            start = getattr(module, "start", None)
+            if callable(start):
+                self.logger.info("starting module=%s", name)
+                start()
+        audio = self.registry.get("audio_hub")
+        if audio is not None:
+            audio.start()
+
+    def close(self) -> None:
+        self.registry.close_all()
+        self.logger.info("Runtime closed")
+
+    def context_snapshot(self) -> dict:
+        data = asdict(self.context) if is_dataclass(self.context) else vars(self.context)
+        data["state"] = str(self.context.state)
+        data["last_event"] = self.context.last_event.event_type if self.context.last_event else None
+        return data
