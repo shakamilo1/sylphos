@@ -199,7 +199,13 @@ _LOCAL_NAME_TO_FIELD = {
 
 
 def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
-    """Load OpenClaw bridge settings from defaults, local config, and env vars."""
+    """Load OpenClaw bridge settings from the same layered config as Runtime.
+
+    The Runtime loader already merges defaults, root/package/project-local
+    config files (including ``config/local_config.py``), and environment
+    variables.  Reusing it here keeps ``load_config().OPENCLAW_DRY_RUN`` and
+    ``load_openclaw_bridge_config().dry_run`` synchronized.
+    """
 
     values: dict[str, Any] = {
         "tool_provider": TOOL_PROVIDER,
@@ -228,9 +234,35 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
         "audit_log_path": OPENCLAW_AUDIT_LOG_PATH,
     }
 
-    for key, value in _load_local_overrides().items():
-        values[_LOCAL_NAME_TO_FIELD[key]] = value
+    from sylphos.config.loader import load_config
 
+    runtime_config = load_config()
+    alias_names = {
+        "OPENCLAW_CLI",
+        "OPENCLAW_WORKDIR",
+        "OPENCLAW_API_URL",
+        "OPENCLAW_WS_URL",
+        "OPENCLAW_TOKEN",
+    }
+    for key, field in _LOCAL_NAME_TO_FIELD.items():
+        if key not in alias_names and hasattr(runtime_config, key):
+            values[field] = getattr(runtime_config, key)
+
+    def apply_alias(preferred_name: str, alias_name: str, field: str, default_preferred: Any, default_alias: Any) -> None:
+        preferred = getattr(runtime_config, preferred_name, default_preferred)
+        alias = getattr(runtime_config, alias_name, default_alias)
+        if preferred != default_preferred:
+            values[field] = preferred
+        elif alias != default_alias:
+            values[field] = alias
+        else:
+            values[field] = preferred
+
+    apply_alias("OPENCLAW_CLI_PATH", "OPENCLAW_CLI", "cli_path", OPENCLAW_CLI_PATH, OPENCLAW_CLI)
+    apply_alias("OPENCLAW_WORKSPACE", "OPENCLAW_WORKDIR", "workspace", OPENCLAW_WORKSPACE, OPENCLAW_WORKDIR)
+    apply_alias("OPENCLAW_HTTP_BASE_URL", "OPENCLAW_API_URL", "http_base_url", OPENCLAW_HTTP_BASE_URL, OPENCLAW_API_URL)
+    apply_alias("OPENCLAW_GATEWAY_WS_URL", "OPENCLAW_WS_URL", "gateway_ws_url", OPENCLAW_GATEWAY_WS_URL, OPENCLAW_WS_URL)
+    apply_alias("OPENCLAW_AUTH_TOKEN", "OPENCLAW_TOKEN", "auth_token", OPENCLAW_AUTH_TOKEN, OPENCLAW_TOKEN)
     values.update(
         {
             "tool_provider": os.getenv("TOOL_PROVIDER", values["tool_provider"]),
