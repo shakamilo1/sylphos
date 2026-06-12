@@ -751,9 +751,88 @@ file /tmp/sylphos_tts_test_v1.wav
 
 ---
 
-## 10. Windows Sylphos 端调用流程
+## 10. Windows 一键启动 WSL2 CosyVoice3 服务
 
-### 10.1 调用地址
+完成 WSL2、Conda、模型和 `/home/shakamilo/sylphos_services/cosyvoice3` 服务目录准备后，Windows 端不需要手动打开 Ubuntu，也不需要手动输入 `uvicorn` 或设置环境变量。进入 Sylphos 仓库后，在 Windows PowerShell 中直接运行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py
+```
+
+该脚本默认会使用 `wsl.exe -d Ubuntu -- bash -lc "..."` 进入 WSL2，在 Ubuntu 内激活 `cosyvoice3` Conda 环境，设置 CosyVoice3 所需环境变量，并用 `nohup` 在后台启动：
+
+```bash
+uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
+```
+
+uvicorn 日志默认写入 WSL 文件：
+
+```text
+/home/shakamilo/sylphos_services/cosyvoice3/cosyvoice3_service.log
+```
+
+PID 默认写入：
+
+```text
+/tmp/sylphos_cosyvoice3_uvicorn.pid
+```
+
+启动后，Windows 脚本会继续轮询 `http://127.0.0.1:9880/health`。当 `/health` 成功后，脚本会自动调用 `/v1/tts` 做一次预热测试，默认使用：
+
+```json
+{
+  "text": "你好，Sylphos。CosyVoice3 服务启动并预热成功。",
+  "model_version": "base",
+  "voice_id": "official"
+}
+```
+
+测试 WAV 会保存到 Windows 临时目录下的 `sylphos_tts` 子目录，并使用 Windows 标准库 `winsound` 播放。Windows 脚本退出后，WSL2 中的 CosyVoice3 uvicorn 服务会继续在后台运行。
+
+常用命令：
+
+```powershell
+# 启动并预热
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py
+
+# 强制重启
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --restart
+
+# 只看日志
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --tail-log
+
+# 停止服务
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --stop
+
+# 服务已启动时只测试
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --no-launch
+```
+
+如果使用的 WSL 发行版名称不是默认 `Ubuntu`，例如 `Ubuntu-24.04`，可指定：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --distro Ubuntu-24.04
+```
+
+如果启动等待 `/health` 超时，脚本会自动尝试打印日志末尾。也可以手动查看：
+
+```powershell
+wsl -d Ubuntu -- tail -n 120 /home/shakamilo/sylphos_services/cosyvoice3/cosyvoice3_service.log
+```
+
+如需停止后台服务，也可以手动执行：
+
+```powershell
+wsl -d Ubuntu -- bash -lc 'kill $(cat /tmp/sylphos_cosyvoice3_uvicorn.pid)'
+```
+
+> 注意：一键启动脚本的目标是让 Windows 用户无需手动打开 Ubuntu、无需手动输入 `uvicorn`、无需手动设置环境变量，即可启动、检查并预热 CosyVoice3 服务。
+
+---
+
+## 11. Windows Sylphos 端调用流程
+
+### 11.1 调用地址
 
 Windows 端 Sylphos 访问 WSL2 中的 FastAPI 服务地址：
 
@@ -763,7 +842,7 @@ http://127.0.0.1:9880/v1/tts
 
 在常见 WSL2 配置下，Windows 访问 `127.0.0.1:<端口>` 可以转发到 WSL2 中监听 `0.0.0.0:<端口>` 的服务。
 
-### 10.2 请求方式
+### 11.2 请求方式
 
 Windows Sylphos 端通过 HTTP POST 调用 `/v1/tts`。
 
@@ -809,7 +888,7 @@ Windows Sylphos 端通过 HTTP POST 调用 `/v1/tts`。
 
 Windows 端 `TTSClient.speak(..., **extra_payload)` 已经会透传额外字段，因此可以传入 `voice_id`、`prompt_wav` 或 `prompt_text`，不需要修改 `/v1/tts` 协议。
 
-### 10.3 响应处理流程
+### 11.3 响应处理流程
 
 Windows Sylphos 端推荐按以下流程处理响应：
 
@@ -828,7 +907,7 @@ Windows Sylphos 端推荐按以下流程处理响应：
 8. 每次合成生成新的文件名，避免多次调用时覆盖上一段语音。
 9. 如果接口失败、网络异常或返回内容不是有效音频，应在 Sylphos 日志或界面中输出错误信息。
 
-### 10.4 Base / RL 模型选择
+### 11.4 Base / RL 模型选择
 
 Windows Sylphos 端只需要通过请求参数选择模型版本：
 
@@ -850,7 +929,7 @@ Windows Sylphos 端只需要通过请求参数选择模型版本：
 
 实际加载哪个模型目录由 WSL2 FastAPI 服务端负责，Windows 端不需要直接访问模型文件。
 
-### 10.5 Windows 端播放说明
+### 11.5 Windows 端播放说明
 
 Windows 端拿到 WAV 文件后，`TTSClient(..., auto_play=True)` 默认使用 `play_backend="auto"`。在 Windows 上该模式会优先调用标准库 `winsound.PlaySound(..., winsound.SND_FILENAME)` 阻塞播放 WAV，因此正常情况下会直接从 Windows 音箱播放，不再弹出默认播放器窗口。
 
@@ -882,9 +961,9 @@ client.speak("你好，我是 Sylphos。")
 
 ---
 
-## 11. 常见问题与排查
+## 12. 常见问题与排查
 
-### 11.1 WSL2 中 `nvidia-smi` 不可用
+### 12.1 WSL2 中 `nvidia-smi` 不可用
 
 可能原因：
 
@@ -904,7 +983,7 @@ wsl --shutdown
 nvidia-smi
 ```
 
-### 11.2 PyTorch 显示 CUDA 不可用
+### 12.2 PyTorch 显示 CUDA 不可用
 
 检查命令：
 
@@ -919,13 +998,13 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 3. 是否在正确的 Conda 环境中运行。
 4. WSL2 中 `nvidia-smi` 是否正常。
 
-### 11.3 模型下载不完整
+### 12.3 模型下载不完整
 
 如果模型目录缺少 `llm.pt`、`llm.rl.pt` 或配置文件，可能是下载中断或 Git LFS / ModelScope 下载异常。
 
 建议重新下载到新的临时目录，确认完整后再替换旧目录。
 
-### 11.4 FastAPI 服务无法启动
+### 12.4 FastAPI 服务无法启动
 
 常见原因：
 
@@ -954,7 +1033,7 @@ cp ~/sylphos/services/cosyvoice3/cosyvoice_server.py ~/sylphos_services/cosyvoic
 ss -ltnp | grep 9880
 ```
 
-### 11.5 Windows 无法访问 `127.0.0.1:9880`
+### 12.5 Windows 无法访问 `127.0.0.1:9880`
 
 建议排查：
 
@@ -979,7 +1058,7 @@ hostname -I
 http://172.xx.xx.xx:9880/health
 ```
 
-### 11.6 第一次推理非常慢
+### 12.6 第一次推理非常慢
 
 这是正常现象。第一次请求通常会触发：
 
@@ -990,11 +1069,11 @@ http://172.xx.xx.xx:9880/health
 
 服务常驻后，后续请求会更快。建议在 Sylphos 正式使用前先执行一次短文本预热请求。
 
-### 11.7 ONNX Runtime 警告
+### 12.7 ONNX Runtime 警告
 
 部署过程中可能出现 ONNX Runtime 相关警告。如果 PyTorch CUDA 推理已经成功，并且 WAV 能正常生成，此类警告通常可以暂时忽略。后续如需优化启动速度或推理性能，再单独处理 ONNX Runtime 配置。
 
-### 11.8 `/health` 中 `cosyvoice_importable=false`
+### 12.8 `/health` 中 `cosyvoice_importable=false`
 
 排查：
 
@@ -1002,7 +1081,7 @@ http://172.xx.xx.xx:9880/health
 2. 检查 `/home/shakamilo/CosyVoice/cosyvoice/cli/cosyvoice.py` 是否存在。
 3. 查看 `/health` 错误中打印的 `sys.path` 是否包含 CosyVoice 仓库和 `third_party/Matcha-TTS`。
 
-### 11.9 `/health` 中 `cosyvoice_loaded=false`
+### 12.9 `/health` 中 `cosyvoice_loaded=false`
 
 排查：
 
@@ -1011,19 +1090,19 @@ http://172.xx.xx.xx:9880/health
 3. 不要把简化软链接 `base` / `rl` 直接传给 `AutoModel`。
 4. 检查 PyTorch / CUDA 是否可用。
 
-### 11.10 `CosyVoice3.__init__() got an unexpected keyword argument 'device'`
+### 12.10 `CosyVoice3.__init__() got an unexpected keyword argument 'device'`
 
 不要把 `device` 参数传给 `AutoModel` 或 `CosyVoice3` 构造函数。`COSYVOICE_DEVICE` 目前只用于 `/health` 诊断和未来扩展。
 
-### 11.11 错误 `"'中文女'"`
+### 12.11 错误 `"'中文女'"`
 
 默认链路不应使用 `speaker="中文女"`。CosyVoice3 默认应走 zero-shot：`prompt_wav` + `prompt_text` + `inference_zero_shot`。`speaker` 只用于未来明确的 SFT / speaker 模式。
 
-### 11.12 保存出的 `.wav` 是 `JSON text data`
+### 12.12 保存出的 `.wav` 是 `JSON text data`
 
 这说明服务端返回的是错误 JSON，不是音频。使用 `curl --fail-with-body` 查看 HTTP 状态码和 JSON `error` / `errors` 字段。成功 WAV 应为 `RIFF/WAVE`。
 
-### 11.13 `422 Unprocessable Entity`
+### 12.13 `422 Unprocessable Entity`
 
 通常表示请求 JSON 不符合 schema。检查：
 
@@ -1031,11 +1110,11 @@ http://172.xx.xx.xx:9880/health
 2. PowerShell / curl 引号是否正确转义。
 3. 字段类型是否为 string，例如 `text`、`model_version`、`voice_id`、`prompt_wav`、`prompt_text`。
 
-### 11.14 `too short than prompt text` warning
+### 12.14 `too short than prompt text` warning
 
 这是 CosyVoice 的质量警告，不是服务错误。它表示合成文本比 `prompt_text` 短，可能影响表现。可以忽略，或使用更短、更匹配的参考 prompt。
 
-### 11.15 `.ogg` 改名 `.wav` 也能用
+### 12.15 `.ogg` 改名 `.wav` 也能用
 
 这通常是底层解码器根据文件头识别出了真实格式。不建议依赖此行为，推荐用 `ffmpeg` 转成真正 WAV：
 
@@ -1048,11 +1127,11 @@ ffmpeg -y -i input.ogg -ac 1 -ar 24000 output.wav
 ---
 
 
-## 12. PR #18 最终跑通流程与验收命令
+## 13. PR #18 最终跑通流程与验收命令
 
 本节记录 PR #18 在用户本机最终确认跑通的实际部署路径和验收命令。前文可作为详细背景，本节可作为合并前的标准操作清单。
 
-### 12.1 WSL2 Ubuntu 24.04 与 Conda 环境
+### 13.1 WSL2 Ubuntu 24.04 与 Conda 环境
 
 推荐环境：
 
@@ -1094,7 +1173,7 @@ PY
 
 如果 `torch.cuda.is_available()` 为 `True` 且最后输出 `cuda matmul ok`，说明 PyTorch CUDA 基本可用。
 
-### 12.2 模型、RL 权重与 ttsfrd
+### 13.2 模型、RL 权重与 ttsfrd
 
 最终跑通的模型路径为：
 
@@ -1139,7 +1218,7 @@ pip install ttsfrd-0.4.2-cp310-cp310-linux_x86_64.whl
 use ttsfrd frontend
 ```
 
-### 12.3 最终推荐服务启动命令
+### 13.3 最终推荐服务启动命令
 
 服务目录为：
 
@@ -1168,7 +1247,7 @@ uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 4. `COSYVOICE_PROMPT_DIR` 是 `voice_id` 音色库目录。
 5. 服务监听 `0.0.0.0:9880`，Windows 端通常可通过 `http://127.0.0.1:9880` 访问。
 
-### 12.4 健康检查与字段含义
+### 13.4 健康检查与字段含义
 
 在 WSL2 中执行：
 
@@ -1201,7 +1280,7 @@ curl http://127.0.0.1:9880/health
 - `model_path` 应指向最终跑通路径 `/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`。
 - ONNX Runtime `libcudnn.so.8` 相关警告可以暂时忽略，只要 PyTorch CUDA 可用且 WAV 能生成。
 
-### 12.5 WSL2 端 `/v1/tts` 验收命令
+### 13.5 WSL2 端 `/v1/tts` 验收命令
 
 推荐使用 `--fail-with-body`，避免失败 JSON 被误当成 WAV：
 
@@ -1230,7 +1309,7 @@ ls -lh /tmp/sylphos_tts_test.wav
 
 如果 `file` 显示 `JSON text data`，说明服务端返回了错误 JSON，不是音频。失败时应查看 JSON 的 `error` / `errors` 字段。
 
-### 12.6 Windows 端 Sylphos 调用测试
+### 13.6 Windows 端 Sylphos 调用测试
 
 在 Windows PowerShell 中进入 Sylphos 仓库：
 
@@ -1258,7 +1337,7 @@ RL 模型测试：
 4. `speak()` 返回生成的临时 WAV 文件路径。
 5. 临时 WAV 通常位于：`C:\Users\shakamilo\AppData\Local\Temp\sylphos_tts\`。
 
-### 12.7 `voice_id` 音色切换
+### 13.7 `voice_id` 音色切换
 
 音色库目录：
 
@@ -1310,7 +1389,7 @@ Windows PowerShell 测试 Kerrigan 音色：
 
 临时换音色不需要重启服务，只要请求传不同 `voice_id` 即可。修改 `COSYVOICE_PROMPT_DIR` 环境变量本身需要重启服务。
 
-### 12.8 `prompt_wav` / `prompt_text` 临时覆盖
+### 13.8 `prompt_wav` / `prompt_text` 临时覆盖
 
 除了 `voice_id`，也可以直接传 `prompt_wav` / `prompt_text`：
 
@@ -1336,7 +1415,7 @@ Windows PowerShell 测试 Kerrigan 音色：
 You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。
 ```
 
-### 12.9 长文本测试与多段拼接
+### 13.9 长文本测试与多段拼接
 
 CosyVoice 对长文本可能会内部分段，generator 会 yield 多个 `tts_speech` 片段。服务端现在会完整消费 generator，并拼接所有音频片段后返回完整 WAV。
 
@@ -1350,7 +1429,7 @@ Windows PowerShell 长文本测试：
 
 测试时要听最后一句是否完整播放。如果只播放前半段，说明多段拼接逻辑有问题。
 
-### 12.10 当前已确认通过的能力
+### 13.10 当前已确认通过的能力
 
 用户本机已经确认：
 
@@ -1362,7 +1441,7 @@ Windows PowerShell 长文本测试：
 - Windows 端 `auto_play=True` 可以通过音箱直接播放。
 - `/health`、`/v1/tts`、Windows `TTSClient` 端到端链路可用。
 
-## 13. 最终合并前检查清单
+## 14. 最终合并前检查清单
 
 合并 PR #18 前，按最终跑通路径逐项确认：
 
@@ -1393,7 +1472,7 @@ Windows PowerShell 长文本测试：
 
 ---
 
-## 14. 小结
+## 15. 小结
 
 通过以上步骤，CosyVoice3 被部署在 WSL2 Ubuntu 中，使用 Conda 管理 Python 3.10 环境，并通过 PyTorch CUDA 调用 GPU 完成语音合成。模型目录使用 `Fun-CosyVoice3-0.5B` 作为 Base 标准目录，并通过复制为 `Fun-CosyVoice3-0.5B-rl` 后替换 `llm.pt` 启用 RL 版本，便于服务端按请求参数切换。FastAPI 服务监听 `9880` 端口，Windows Sylphos 主程序通过 HTTP 调用 `/v1/tts`，传入文本与模型版本，接收生成音频后保存到 Windows 临时目录，并默认通过 `winsound` 在后台播放。
 
