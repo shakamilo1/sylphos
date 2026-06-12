@@ -29,7 +29,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 9880
 DEFAULT_HEALTH_URL = f"http://127.0.0.1:{DEFAULT_PORT}/health"
 DEFAULT_TTS_URL = f"http://127.0.0.1:{DEFAULT_PORT}/v1/tts"
-DEFAULT_SERVICE_DIR = "~/sylphos_services/cosyvoice3"
+DEFAULT_SERVICE_DIR = "/home/shakamilo/sylphos_services/cosyvoice3"
 DEFAULT_TEST_TEXT = "你好，Sylphos。CosyVoice3 服务启动成功。"
 DEFAULT_WSL_PID_FILE = "/tmp/sylphos_cosyvoice3_uvicorn.pid"
 
@@ -95,7 +95,7 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def launch_service_window(args: argparse.Namespace) -> subprocess.Popen[Any]:
+def launch_service_window(args: argparse.Namespace) -> subprocess.Popen[Any] | None:
     """Open Windows Terminal or a separate WSL console and start uvicorn."""
 
     bash_script = build_wsl_start_script(
@@ -114,13 +114,30 @@ def launch_service_window(args: argparse.Namespace) -> subprocess.Popen[Any]:
     if terminal == "wt":
         if not shutil.which("wt.exe"):
             raise RuntimeError("wt.exe was requested but Windows Terminal was not found on PATH.")
-        command = ["wt.exe", "new-tab", "--title", "CosyVoice3 uvicorn", *wsl_command]
+        command = ["wt.exe", "new-tab", "--title", "CosyVoice3 uvicorn", "--", *wsl_command]
+        if args.print_command or args.dry_run:
+            print_launch_command(command)
+        if args.dry_run:
+            return None
         print("[Windows] Opening Windows Terminal tab for CosyVoice3 uvicorn logs...")
         return subprocess.Popen(command)
 
     creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    if args.print_command or args.dry_run:
+        print_launch_command(wsl_command)
+    if args.dry_run:
+        return None
     print("[Windows] Opening a separate WSL console window for CosyVoice3 uvicorn logs...")
     return subprocess.Popen(wsl_command, creationflags=creationflags)
+
+
+def print_launch_command(command: list[str]) -> None:
+    """Print the exact command list and an escaped command line for debugging."""
+
+    print("[Windows] Launch command argv:")
+    print(json.dumps(command, ensure_ascii=False, indent=2))
+    print("[Windows] Launch command line:")
+    print(subprocess.list2cmdline(command))
 
 
 def read_wsl_uvicorn_pid(distro: str, pid_file: str = DEFAULT_WSL_PID_FILE) -> str | None:
@@ -274,6 +291,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distro", default=DEFAULT_DISTRIBUTION, help="WSL distribution name, e.g. Ubuntu or Ubuntu-24.04.")
     parser.add_argument("--terminal", choices=["auto", "wt", "wsl"], default="auto", help="Use Windows Terminal or a standalone WSL console.")
     parser.add_argument("--no-launch", action="store_true", help="Do not start a new service window; only poll and test an existing service.")
+    parser.add_argument("--print-command", action="store_true", help="Print the final wt.exe/wsl.exe command before launching.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the final wt.exe/wsl.exe command and exit without launching or testing.")
     parser.add_argument("--conda-env", default=DEFAULT_CONDA_ENV, help="Conda environment to activate inside WSL.")
     parser.add_argument("--service-dir", default=DEFAULT_SERVICE_DIR, help="CosyVoice3 service directory inside WSL.")
     parser.add_argument("--host", default=DEFAULT_HOST, help="uvicorn host inside WSL.")
@@ -303,6 +322,9 @@ def main() -> int:
     process: subprocess.Popen[Any] | None = None
     if not args.no_launch:
         process = launch_service_window(args)
+        if process is None:
+            print("[Windows] Dry run completed; service was not launched.")
+            return 0
         print(f"[Windows] Launcher process PID: {process.pid}")
         time.sleep(1.0)
         uvicorn_pid = read_wsl_uvicorn_pid(args.distro)
