@@ -68,6 +68,32 @@ def _wakeword_kwargs_from_config(config) -> dict:
     }
 
 
+def _recorder_kwargs_from_config(config, audio_sample_rate: int) -> dict:
+    """Map existing CommandRecorder config fields to RecorderService."""
+
+    return {
+        "samplerate": audio_sample_rate,
+        "output_dir": getattr(
+            config,
+            "RECORD_SAVE_DIR",
+            getattr(config, "RECORDINGS_DIR", "outputs/recordings"),
+        ),
+        "channels": int(getattr(config, "CHANNELS", getattr(config, "AUDIO_CHANNELS", 1))),
+        "sample_width_bytes": int(getattr(config, "SAMPLE_WIDTH_BYTES", 2)),
+        "save_mode": getattr(config, "RECORD_SAVE_MODE", "latest"),
+        "latest_filename": getattr(config, "LATEST_RECORD_FILENAME", "latest_command.wav"),
+        "vad_enabled": bool(getattr(config, "VAD_ENABLED", True)),
+        "vad_sample_rate": int(getattr(config, "VAD_SAMPLE_RATE", 16000)),
+        "vad_threshold": float(getattr(config, "VAD_THRESHOLD", 0.5)),
+        "vad_min_speech_duration_ms": int(getattr(config, "VAD_MIN_SPEECH_DURATION_MS", 150)),
+        "vad_min_silence_duration_ms": int(getattr(config, "VAD_MIN_SILENCE_DURATION_MS", 300)),
+        "vad_speech_pad_ms": int(getattr(config, "VAD_SPEECH_PAD_MS", 100)),
+        "vad_end_silence_ms": int(getattr(config, "VAD_END_SILENCE_MS", 800)),
+        "vad_prebuffer_ms": int(getattr(config, "VAD_PREBUFFER_MS", 300)),
+        "vad_check_interval_ms": int(getattr(config, "VAD_CHECK_INTERVAL_MS", 200)),
+    }
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     if _HAS_RICH:
         logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(rich_tracebacks=True)])
@@ -104,7 +130,7 @@ class RuntimeApp:
                 **_wakeword_kwargs_from_config(self.config),
             ),
         )
-        self.registry.register("recorder", RecorderService(self.event_bus, audio_hub=audio, samplerate=audio_sample_rate))
+        self.registry.register("recorder", RecorderService(self.event_bus, audio_hub=audio, **_recorder_kwargs_from_config(self.config, audio_sample_rate)))
 
         stt_provider = getattr(self.config, "STT_PROVIDER", "dummy")
         stt_engine = DummySTT(getattr(self.config, "DUMMY_STT_TEXT", "打开浏览器")) if stt_provider == "dummy" else SenseVoiceRuntimeAdapter(provider=stt_provider)
