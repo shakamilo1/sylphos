@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 
 try:
     from rich.logging import RichHandler
@@ -26,6 +27,47 @@ from sylphos.voice.tts import CosyVoiceClient, DummyTTS
 from sylphos.voice.wakeword.openwakeword_engine import OpenWakeWordEngineAdapter
 
 
+def _audio_device_from_config(config):
+    explicit = getattr(config, "AUDIO_DEVICE", None)
+    if explicit is not None:
+        return explicit
+    device_name = getattr(config, "AUDIO_INPUT_DEVICE_NAME", None)
+    if device_name:
+        return device_name
+    return getattr(config, "AUDIO_INPUT_DEVICE_INDEX", None)
+
+
+def _wakeword_kwargs_from_config(config) -> dict:
+    """Map existing wakeword config.py/config/local_config.py fields to the adapter."""
+
+    model_name = getattr(config, "WAKEWORD_MODEL_NAME", None)
+    model_path = getattr(config, "WAKEWORD_MODEL_PATH", None)
+    model_dir = getattr(config, "WAKEWORD_MODEL_DIR", None)
+    relative_path = getattr(config, "WAKEWORD_MODEL_RELATIVE_PATH", None)
+    source = getattr(config, "WAKEWORD_MODEL_SOURCE", "openwakeword_resource")
+
+    # Explicit model path has highest priority.  If only a model directory and
+    # model name are configured, combine them using pathlib for Windows/Linux.
+    if model_path:
+        source = "project_relative"
+        relative_path = str(model_path)
+    elif not relative_path and model_dir and model_name:
+        source = "project_relative"
+        relative_path = str(Path(str(model_dir)) / str(model_name))
+    elif source == "project_relative" and not relative_path and model_name:
+        relative_path = str(model_name)
+
+    return {
+        "input_rate": int(getattr(config, "INPUT_RATE", getattr(config, "AUDIO_SAMPLE_RATE", 44100))),
+        "target_rate": int(getattr(config, "WAKEWORD_TARGET_RATE", 16000)),
+        "threshold": float(getattr(config, "WAKEWORD_THRESHOLD", 0.5)),
+        "cooldown_seconds": float(getattr(config, "WAKEWORD_COOLDOWN_SECONDS", 2.0)),
+        "wakeword_model_source": source,
+        "wakeword_model_name": model_name,
+        "wakeword_model_relative_path": relative_path,
+    }
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     if _HAS_RICH:
         logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(rich_tracebacks=True)])
@@ -43,15 +85,26 @@ class RuntimeApp:
         self.orchestrator = None
 
     def build(self) -> "RuntimeApp":
+        audio_enabled = bool(getattr(self.config, "AUDIO_ENABLED", False))
+        audio_sample_rate = int(getattr(self.config, "INPUT_RATE", getattr(self.config, "AUDIO_SAMPLE_RATE", 44100)))
         audio = self.registry.register("audio_hub", AudioHubAdapter(
-            enabled=bool(getattr(self.config, "AUDIO_ENABLED", False)),
-            device=getattr(self.config, "AUDIO_DEVICE", None),
-            samplerate=int(getattr(self.config, "AUDIO_SAMPLE_RATE", 44100)),
-            channels=int(getattr(self.config, "AUDIO_CHANNELS", 1)),
-            blocksize=int(getattr(self.config, "AUDIO_BLOCKSIZE", 4410)),
+            enabled=audio_enabled,
+            device=_audio_device_from_config(self.config),
+            samplerate=audio_sample_rate,
+            channels=int(getattr(self.config, "CHANNELS", getattr(self.config, "AUDIO_CHANNELS", 1))),
+            blocksize=int(getattr(self.config, "BLOCKSIZE", getattr(self.config, "AUDIO_BLOCKSIZE", 4410))),
+            dtype=getattr(self.config, "DTYPE", "float32"),
         ))
-        self.registry.register("wakeword", OpenWakeWordEngineAdapter(self.event_bus, audio_hub=audio, enabled=bool(getattr(self.config, "AUDIO_ENABLED", False))))
-        self.registry.register("recorder", RecorderService(self.event_bus, audio_hub=audio, samplerate=int(getattr(self.config, "AUDIO_SAMPLE_RATE", 44100))))
+        self.registry.register(
+            "wakeword",
+            OpenWakeWordEngineAdapter(
+                self.event_bus,
+                audio_hub=audio,
+                enabled=audio_enabled,
+                **_wakeword_kwargs_from_config(self.config),
+            ),
+        )
+        self.registry.register("recorder", RecorderService(self.event_bus, audio_hub=audio, samplerate=audio_sample_rate))
 
         stt_provider = getattr(self.config, "STT_PROVIDER", "dummy")
         stt_engine = DummySTT(getattr(self.config, "DUMMY_STT_TEXT", "打开浏览器")) if stt_provider == "dummy" else SenseVoiceRuntimeAdapter(provider=stt_provider)

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import logging
+import importlib.resources as ir
+from pathlib import Path
 
 from sylphos.runtime.event_bus import EventBus
 from sylphos.runtime.events import PauseWakeWordRequested, ResumeWakeWordRequested, WakeWordDetected
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class OpenWakeWordEngineAdapter:
@@ -14,12 +19,40 @@ class OpenWakeWordEngineAdapter:
         self._engine = None
     def _ensure_engine(self):
         if self._engine is None:
+            self._validate_model_config()
             from voice.wakeword.openwakeword_engine import OpenWakeWordEngine
             self._engine = OpenWakeWordEngine(**self.kwargs)
             self._engine.set_callback(lambda name, score: self.event_bus.publish(WakeWordDetected(name=name, score=score)))
-            if self.audio_hub is not None and getattr(self.audio_hub, "_hub", None) is not None:
+            if self.audio_hub is not None:
                 self.audio_hub.subscribe(self._engine.consume)
         return self._engine
+
+    def _validate_model_config(self) -> None:
+        source = self.kwargs.get("wakeword_model_source", "openwakeword_resource")
+        model_name = self.kwargs.get("wakeword_model_name")
+        relative_path = self.kwargs.get("wakeword_model_relative_path")
+        if not model_name and not relative_path:
+            raise RuntimeError(
+                "AUDIO_ENABLED=True requires an explicit wakeword model. Configure "
+                "WAKEWORD_MODEL_PATH, WAKEWORD_MODEL_RELATIVE_PATH, or WAKEWORD_MODEL_NAME "
+                "in config/local_config.py. Refusing to load the openWakeWord default model "
+                "implicitly."
+            )
+
+        attempted_path = None
+        if source == "openwakeword_resource" and model_name:
+            attempted_path = Path(str(ir.files("openwakeword") / "resources" / "models")) / str(model_name)
+        elif source == "project_relative" and relative_path:
+            attempted_path = Path(str(relative_path))
+            if not attempted_path.is_absolute():
+                attempted_path = PROJECT_ROOT / attempted_path
+
+        if attempted_path is not None and not attempted_path.exists():
+            raise RuntimeError(
+                f"Configured wakeword model file does not exist: {attempted_path}. "
+                "Check WAKEWORD_MODEL_PATH, WAKEWORD_MODEL_RELATIVE_PATH, "
+                "WAKEWORD_MODEL_DIR, WAKEWORD_MODEL_NAME, and WAKEWORD_MODEL_SOURCE."
+            )
     def start(self):
         self.event_bus.subscribe("wakeword.pause.requested", self._on_pause)
         self.event_bus.subscribe("wakeword.resume.requested", self._on_resume)
