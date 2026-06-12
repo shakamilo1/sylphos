@@ -751,9 +751,11 @@ file /tmp/sylphos_tts_test_v1.wav
 
 ---
 
-## 10. 使用脚本启动 WSL2 CosyVoice3 服务
+## 10. 在 WSL2/Ubuntu 中手动启动 CosyVoice3 服务
 
-如果不想手动逐行输入 Conda 激活、环境变量和 `uvicorn` 命令，可以直接使用仓库中的简化启动脚本：
+当前推荐的稳定方案是：**在 WSL2/Ubuntu 终端中手动启动 CosyVoice3 FastAPI 服务，Windows 端只负责调用已经启动的服务并测试 TTS**。不再推荐使用 Windows 脚本自动弹出或自动启动 WSL/Ubuntu/CosyVoice 服务。
+
+如果不想手动逐行输入 Conda 激活、环境变量和 `uvicorn` 命令，可以在 WSL2/Ubuntu 终端中运行仓库里的简化脚本：
 
 ```bash
 bash scripts/start_cosyvoice3_wsl.sh
@@ -790,21 +792,9 @@ export COSYVOICE_PROMPT_DIR=/home/shakamilo/sylphos_services/cosyvoice3/prompts
 uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
-> 注意：该脚本以前台方式运行服务。需要停止服务时，在运行脚本的 WSL2 终端中按 `Ctrl+C` 即可。
+> 注意：该脚本以前台方式运行服务。需要停止服务时，在运行脚本的 WSL2/Ubuntu 终端中按 `Ctrl+C` 即可。
 
-从 Windows PowerShell 侧也可以直接调用 WSL 执行该脚本。下面命令假设 Sylphos 仓库位于 WSL2 的 `/home/shakamilo/sylphos`：
-
-```powershell
-wsl -d Ubuntu -- bash -lc "cd /home/shakamilo/sylphos && bash scripts/start_cosyvoice3_wsl.sh"
-```
-
-如果你的 WSL 发行版名是 `Ubuntu-24.04`，则把 `Ubuntu` 改成 `Ubuntu-24.04`：
-
-```powershell
-wsl -d Ubuntu-24.04 -- bash -lc "cd /home/shakamilo/sylphos && bash scripts/start_cosyvoice3_wsl.sh"
-```
-
-启动后，保持该终端窗口打开，Windows 端即可继续通过以下地址访问服务：
+服务启动后，保持该 WSL2/Ubuntu 终端窗口打开。Windows 端即可通过以下地址访问服务：
 
 ```text
 http://127.0.0.1:9880/v1/tts
@@ -940,6 +930,72 @@ client.speak("你好，我是 Sylphos。")
 | `auto` | 默认值；Windows 优先 `winsound`，失败后回退默认播放器；其他系统保持原有 fallback |
 | `winsound` | 强制使用 Windows `winsound` 播放；非 Windows 环境会给出清晰错误 |
 | `default_app` | 使用原来的默认播放器方案：Windows `os.startfile`、macOS `open`、Linux `xdg-open` |
+
+---
+
+## Windows 端 PowerShell 测试命令
+
+前提：
+
+* WSL2/Ubuntu 中的 CosyVoice3 FastAPI 服务已经手动启动。
+* 服务地址为 `http://127.0.0.1:9880/v1/tts`。
+* Windows 端仓库路径为 `H:\sylphos1\sylphos`。
+* Windows 端使用 `.venv\Scripts\python.exe` 调用 `sylphos.voice.tts.TTSClient`。
+* `auto_play=True` 默认优先使用 `winsound` 后台播放，不弹播放器。
+* `voice_id` 可以随时切换音色，不需要重启服务。
+* `speak()` 返回 Windows 临时 WAV 文件路径，通常在 `%TEMP%\sylphos_tts\` 下。
+
+先在 Windows PowerShell 中进入 Sylphos 仓库：
+
+```powershell
+cd H:\sylphos1\sylphos
+```
+
+### 1. Base + official 音色测试
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('这是 Windows 端 Base 模型 official 音色测试。', voice_id='official'); print(p)"
+```
+
+### 2. RL + official 音色测试
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='rl', timeout_seconds=240, auto_play=True).speak('这是 Windows 端 RL 模型 official 音色测试。', voice_id='official'); print(p)"
+```
+
+### 3. Kerrigan 音色测试
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('这是 Windows 端 Kerrigan 音色测试。', voice_id='Kerrigan'); print(p)"
+```
+
+### 4. 切回 official 音色
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True).speak('现在已经切回 official 音色。', voice_id='official'); print(p)"
+```
+
+### 5. 长文本完整播放测试
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=300, auto_play=True).speak('1.温柔正确的人总是难以生存，因为这世界既不温柔，也不正确。2.我是毁灭世界，然后创造世界的人。3.宣告，汝之身托吾麾下。吾之命运附汝剑上，响应圣杯之召唤，遵从这意志、道理者，回应我！4.倘若出生于东海的我是无名小卒的话，那么被我砍倒的你到底又是哪根地上的葱呢。', voice_id='Kerrigan'); print(p)"
+```
+
+长文本测试时要确认最后一句也被播放出来，以验证服务端已经正确拼接 CosyVoice generator 返回的多个音频片段。
+
+### 6. 默认播放器调试模式
+
+```powershell
+.\.venv\Scripts\python.exe -c "from sylphos.voice.tts import TTSClient; p=TTSClient(model_version='base', timeout_seconds=240, auto_play=True, play_backend='default_app').speak('这是默认播放器打开测试。', voice_id='official'); print(p)"
+```
+
+补充说明：
+
+* 正常使用推荐 `play_backend='auto'`，也就是默认值。
+* 如果没有弹播放器但音箱直接发声，说明 `winsound` 后台播放正常。
+* 如果需要确认 WAV 文件内容，可以用返回的路径手动打开。
+* 如果 Windows 端报连接失败，先确认 WSL2 服务是否已经启动并监听 `0.0.0.0:9880`。
+* 如果服务端返回 JSON 错误而不是音频，Windows 端应打印错误信息；不要把 JSON 当作 WAV 播放。
 
 ---
 
