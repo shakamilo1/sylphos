@@ -23,7 +23,7 @@ from sylphos.runtime.tts_handler import TTSHandler
 from sylphos.voice.audio.hub import AudioHubAdapter
 from sylphos.voice.audio.recorder import RecorderService
 from sylphos.voice.stt import DummySTT, SenseVoiceRuntimeAdapter, build_post_processors
-from sylphos.voice.tts import CosyVoiceClient, DummyTTS
+from sylphos.voice.tts import CosyVoiceClient, DummyTTS, TTSClientRuntimeAdapter
 from sylphos.voice.wakeword.openwakeword_engine import OpenWakeWordEngineAdapter
 
 
@@ -94,6 +94,36 @@ def _recorder_kwargs_from_config(config, audio_sample_rate: int) -> dict:
     }
 
 
+def _tts_engine_from_config(config):
+    """Create the configured runtime TTS engine without changing event flow.
+
+    ``base`` and ``tts_client`` use Sylphos' validated ``TTSClient`` path.
+    ``cosyvoice`` intentionally keeps the older source-installed CosyVoice
+    adapter for users who have that dependency available.
+    """
+
+    provider = str(getattr(config, "TTS_PROVIDER", "dummy") or "dummy").strip().lower()
+    if provider == "dummy":
+        return DummyTTS()
+    if provider == "base":
+        return TTSClientRuntimeAdapter(
+            model_version="base",
+            voice_id=getattr(config, "TTS_VOICE_ID", "official"),
+            timeout_seconds=int(getattr(config, "TTS_TIMEOUT_SECONDS", 240)),
+            auto_play=bool(getattr(config, "TTS_AUTO_PLAY", True)),
+        )
+    if provider == "tts_client":
+        return TTSClientRuntimeAdapter(
+            model_version=getattr(config, "TTS_MODEL_VERSION", "base"),
+            voice_id=getattr(config, "TTS_VOICE_ID", "official"),
+            timeout_seconds=int(getattr(config, "TTS_TIMEOUT_SECONDS", 240)),
+            auto_play=bool(getattr(config, "TTS_AUTO_PLAY", True)),
+        )
+    if provider == "cosyvoice":
+        return CosyVoiceClient(base_url=getattr(config, "COSYVOICE_URL", "http://127.0.0.1:8000"))
+    raise ValueError(f"Unsupported TTS_PROVIDER: {provider}")
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     if _HAS_RICH:
         logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(rich_tracebacks=True)])
@@ -136,8 +166,7 @@ class RuntimeApp:
         stt_engine = DummySTT(getattr(self.config, "DUMMY_STT_TEXT", "打开浏览器")) if stt_provider == "dummy" else SenseVoiceRuntimeAdapter(provider=stt_provider)
         self.registry.register("stt", STTHandler(event_bus=self.event_bus, context=self.context, engine=stt_engine))
 
-        tts_provider = getattr(self.config, "TTS_PROVIDER", "dummy")
-        tts_engine = DummyTTS() if tts_provider == "dummy" else CosyVoiceClient(base_url=getattr(self.config, "COSYVOICE_URL", "http://127.0.0.1:8000"))
+        tts_engine = _tts_engine_from_config(self.config)
         self.registry.register("tts", TTSHandler(event_bus=self.event_bus, engine=tts_engine))
 
         self.registry.register_executor("dummy", DummyExecutor())

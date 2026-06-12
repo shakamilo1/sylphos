@@ -3,6 +3,10 @@ RUNTIME_MODE = "event_driven"
 WAKEWORD_PROVIDER = "openwakeword"
 STT_PROVIDER = "dummy"
 TTS_PROVIDER = "dummy"
+TTS_MODEL_VERSION = "base"
+TTS_VOICE_ID = "official"
+TTS_TIMEOUT_SECONDS = 240
+TTS_AUTO_PLAY = True
 TOOL_EXECUTOR_PROVIDER = "dummy"
 
 AUDIO_ENABLED = False
