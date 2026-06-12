@@ -751,82 +751,64 @@ file /tmp/sylphos_tts_test_v1.wav
 
 ---
 
-## 10. Windows 一键启动 WSL2 CosyVoice3 服务
+## 10. 使用脚本启动 WSL2 CosyVoice3 服务
 
-完成 WSL2、Conda、模型和 `/home/shakamilo/sylphos_services/cosyvoice3` 服务目录准备后，Windows 端不需要手动打开 Ubuntu，也不需要手动输入 `uvicorn` 或设置环境变量。进入 Sylphos 仓库后，在 Windows PowerShell 中直接运行：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py
-```
-
-该脚本默认会使用 `wsl.exe -d Ubuntu -- bash -lc "..."` 进入 WSL2，在 Ubuntu 内激活 `cosyvoice3` Conda 环境，设置 CosyVoice3 所需环境变量，并用 `nohup` 在后台启动：
+如果不想手动逐行输入 Conda 激活、环境变量和 `uvicorn` 命令，可以直接使用仓库中的简化启动脚本：
 
 ```bash
+bash scripts/start_cosyvoice3_wsl.sh
+```
+
+脚本内容保持非常简单，只做以下事情：
+
+1. 进入 WSL2 服务目录 `~/sylphos_services/cosyvoice3`。
+2. 通过 `~/anaconda3/etc/profile.d/conda.sh` 激活 Conda。
+3. 激活 `cosyvoice3` 环境。
+4. 设置 CosyVoice3 所需环境变量。
+5. 在前台启动 `uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880`。
+
+对应脚本为：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 进入服务目录
+cd ~/sylphos_services/cosyvoice3
+
+# 激活 Conda 环境
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate cosyvoice3
+
+# 设置 CosyVoice3 环境变量
+export COSYVOICE_REPO=/home/shakamilo/CosyVoice
+export COSYVOICE_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+export COSYVOICE_RL_MODEL_PATH=/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-rl
+export COSYVOICE_PROMPT_DIR=/home/shakamilo/sylphos_services/cosyvoice3/prompts
+
+# 启动服务
 uvicorn cosyvoice_server:app --host 0.0.0.0 --port 9880
 ```
 
-uvicorn 日志默认写入 WSL 文件：
+> 注意：该脚本以前台方式运行服务。需要停止服务时，在运行脚本的 WSL2 终端中按 `Ctrl+C` 即可。
+
+从 Windows PowerShell 侧也可以直接调用 WSL 执行该脚本。下面命令假设 Sylphos 仓库位于 WSL2 的 `/home/shakamilo/sylphos`：
+
+```powershell
+wsl -d Ubuntu -- bash -lc "cd /home/shakamilo/sylphos && bash scripts/start_cosyvoice3_wsl.sh"
+```
+
+如果你的 WSL 发行版名是 `Ubuntu-24.04`，则把 `Ubuntu` 改成 `Ubuntu-24.04`：
+
+```powershell
+wsl -d Ubuntu-24.04 -- bash -lc "cd /home/shakamilo/sylphos && bash scripts/start_cosyvoice3_wsl.sh"
+```
+
+启动后，保持该终端窗口打开，Windows 端即可继续通过以下地址访问服务：
 
 ```text
-/home/shakamilo/sylphos_services/cosyvoice3/cosyvoice3_service.log
+http://127.0.0.1:9880/v1/tts
 ```
-
-PID 默认写入：
-
-```text
-/tmp/sylphos_cosyvoice3_uvicorn.pid
-```
-
-启动后，Windows 脚本会继续轮询 `http://127.0.0.1:9880/health`。当 `/health` 成功后，脚本会自动调用 `/v1/tts` 做一次预热测试，默认使用：
-
-```json
-{
-  "text": "你好，Sylphos。CosyVoice3 服务启动并预热成功。",
-  "model_version": "base",
-  "voice_id": "official"
-}
-```
-
-测试 WAV 会保存到 Windows 临时目录下的 `sylphos_tts` 子目录，并使用 Windows 标准库 `winsound` 播放。Windows 脚本退出后，WSL2 中的 CosyVoice3 uvicorn 服务会继续在后台运行。
-
-常用命令：
-
-```powershell
-# 启动并预热
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py
-
-# 强制重启
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --restart
-
-# 只看日志
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --tail-log
-
-# 停止服务
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --stop
-
-# 服务已启动时只测试
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --no-launch
-```
-
-如果使用的 WSL 发行版名称不是默认 `Ubuntu`，例如 `Ubuntu-24.04`，可指定：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\start_cosyvoice3_windows.py --distro Ubuntu-24.04
-```
-
-如果启动等待 `/health` 超时，脚本会自动尝试打印日志末尾。也可以手动查看：
-
-```powershell
-wsl -d Ubuntu -- tail -n 120 /home/shakamilo/sylphos_services/cosyvoice3/cosyvoice3_service.log
-```
-
-如需停止后台服务，也可以手动执行：
-
-```powershell
-wsl -d Ubuntu -- bash -lc 'kill $(cat /tmp/sylphos_cosyvoice3_uvicorn.pid)'
-```
-
-> 注意：一键启动脚本的目标是让 Windows 用户无需手动打开 Ubuntu、无需手动输入 `uvicorn`、无需手动设置环境变量，即可启动、检查并预热 CosyVoice3 服务。
 
 ---
 
