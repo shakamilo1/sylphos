@@ -28,6 +28,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _candidate_roots() -> list[Path]:
+    roots: list[Path] = []
+    for root in (Path.cwd(), _repo_root()):
+        resolved = root.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
 def _import_optional_module(module_name: str) -> ModuleType | None:
     try:
         spec = importlib.util.find_spec(module_name)
@@ -42,7 +51,7 @@ def _import_optional_module(module_name: str) -> ModuleType | None:
 
 
 def _load_python_file(path: Path, module_name: str) -> ModuleType | None:
-    """Load an optional config file by path without requiring it to be importable."""
+    """Load an optional config file by path without requiring sys.path edits."""
 
     if not path.is_file():
         return None
@@ -65,41 +74,39 @@ def _load_first_existing_file(paths: Iterable[Path], module_name: str) -> Module
     return None
 
 
+def _apply_module(data: dict[str, Any], module: ModuleType | None) -> None:
+    if module is not None:
+        data.update(_public_attrs(module))
+
+
 def load_config() -> SimpleNamespace:
     data: dict[str, Any] = {}
+
+    # 1. Defaults are always the base layer.
     defaults = importlib.import_module("sylphos.config.defaults")
     data.update(_public_attrs(defaults))
 
-    cwd = Path.cwd()
-    repo_root = _repo_root()
-    root_candidates = [cwd]
-    if repo_root != cwd:
-        root_candidates.append(repo_root)
+    roots = _candidate_roots()
 
-    module_sources: list[ModuleType | None] = [
-        # 1. sylphos.config.defaults is loaded above.
-        # 2. Project-root config.py, loaded by path so it is not confused with
-        #    the config/ package directory.
-        _load_first_existing_file((root / "config.py" for root in root_candidates), "sylphos_root_config"),
-        # 3. Package-level settings.
-        _import_optional_module("sylphos.config.settings"),
-        # 4. Project-root local_config.py, preserving the existing override path.
-        _load_first_existing_file((root / "local_config.py" for root in root_candidates), "sylphos_root_local_config"),
-        # 5. Package-local sylphos/config/local_config.py.
-        _import_optional_module("sylphos.config.local_config"),
-        # 6. Project-root .\config\local_config.py (Windows) /
-        #    ./config/local_config.py (Linux/macOS).  This is loaded by path so
-        #    users do not need to copy it to the root or manually edit sys.path.
+    # 2. Existing root-level local_config.py override. Loaded by file path so
+    # users do not need to manually add the project root to sys.path.
+    _apply_module(data, _load_first_existing_file((root / "local_config.py" for root in roots), "sylphos_root_local_config"))
+
+    # 3. Existing package-local sylphos/config/local_config.py override.
+    _apply_module(data, _import_optional_module("sylphos.config.local_config"))
+
+    # 4. New project-root config/local_config.py override.  This supports both
+    # Windows .\config\local_config.py and Linux/macOS ./config/local_config.py
+    # without copying the file to the root or modifying sys.path.
+    _apply_module(
+        data,
         _load_first_existing_file(
-            (root / "config" / "local_config.py" for root in root_candidates),
+            (root / "config" / "local_config.py" for root in roots),
             "sylphos_project_config_local_config",
         ),
-    ]
-    for module in module_sources:
-        if module is not None:
-            data.update(_public_attrs(module))
+    )
 
-    # 7. Environment variables have the highest priority and keep the existing
+    # 5. Environment variables have the highest priority and keep the existing
     # coercion behavior based on the current default/local value type.
     for name, current in list(data.items()):
         if name in os.environ:
