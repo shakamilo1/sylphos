@@ -7,6 +7,7 @@ from __future__ import annotations
 """
 
 import importlib.resources as ir
+import inspect
 import logging
 import math
 import time
@@ -67,17 +68,42 @@ class OpenWakeWordEngine:
 
             self._resample = _to_target_rate
 
-        model_kwargs = {"inference_framework": "onnx"}
-
-        model_path = self._resolve_model_path(
+        model_kwargs = self._build_model_kwargs(
             source=wakeword_model_source,
             model_name=wakeword_model_name,
             relative_path=wakeword_model_relative_path,
         )
-        if model_path is not None:
-            model_kwargs["wakeword_models"] = [str(model_path)]
 
         self._model = Model(**model_kwargs)
+
+    def _build_model_kwargs(
+        self,
+        *,
+        source: str,
+        model_name: str | None,
+        relative_path: str | None,
+    ) -> dict:
+        """Build openWakeWord Model kwargs across package API versions."""
+
+        model_kwargs: dict = {}
+        signature = inspect.signature(Model)
+        parameters = signature.parameters
+        if "inference_framework" in parameters:
+            model_kwargs["inference_framework"] = "onnx"
+
+        model_path = self._resolve_model_path(
+            source=source,
+            model_name=model_name,
+            relative_path=relative_path,
+        )
+        if model_path is None:
+            return model_kwargs
+
+        if "wakeword_models" in parameters:
+            model_kwargs["wakeword_models"] = [str(model_path)]
+        else:
+            model_kwargs["wakeword_model_paths"] = [str(model_path)]
+        return model_kwargs
 
     def _resolve_model_path(
         self,

@@ -136,7 +136,8 @@ def test_health_reports_missing_cosyvoice_py(server, monkeypatch: pytest.MonkeyP
     assert payload["ok"] is False
     assert payload["cosyvoice_importable"] is False
     assert payload["cosyvoice_loaded"] is False
-    assert any("cosyvoice/cli/cosyvoice.py" in error for error in payload["errors"])
+    normalized_errors = [error.replace("\\", "/") for error in payload["errors"]]
+    assert any("cosyvoice/cli/cosyvoice.py" in error for error in normalized_errors)
     assert any("Current sys.path" in error for error in payload["errors"])
 
 

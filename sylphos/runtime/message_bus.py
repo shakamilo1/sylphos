@@ -1,7 +1,4 @@
 from __future__ import annotations
-
-"""Compatibility module for runtime message bus imports."""
-
-from sylphos.runtime.events import EventBus, RuntimeEvent
-
-__all__ = ["EventBus", "RuntimeEvent"]
+from sylphos.runtime.event_bus import EventBus, EventHandler
+from sylphos.runtime.events import RuntimeEvent
+__all__ = ["EventBus", "EventHandler", "RuntimeEvent"]
