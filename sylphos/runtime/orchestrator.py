@@ -72,6 +72,20 @@ class RuntimeOrchestrator:
 
     def _mark(self, event: RuntimeEvent, step: str): self.context.mark_event(event, step)
 
+    def _tts_text(self, speak_text: Any) -> str:
+        text = str(speak_text)
+        max_chars = getattr(self.config, "TTS_MAX_SPEAK_CHARS", None)
+        if max_chars in (None, "", "none", "None"):
+            return text
+        try:
+            limit = int(max_chars)
+        except (TypeError, ValueError):
+            self.logger.warning("Ignoring invalid TTS_MAX_SPEAK_CHARS=%r", max_chars)
+            return text
+        if limit <= 0:
+            return text
+        return text[:limit]
+
     def _on_wakeword_detected(self, event):
         self._mark(event, "wakeword_detected")
         self._set_state(RuntimeState.LISTENING, "wakeword_detected")
@@ -150,7 +164,7 @@ class RuntimeOrchestrator:
         self.logger.info("OpenClaw speak_text=%s", speak_text)
         self._set_state(RuntimeState.SPEAKING, "speaking")
         self.event_bus.publish(UIMessageRequested(f"执行结果：{display_text}"))
-        self.event_bus.publish(TTSRequested(str(speak_text)[:120]))
+        self.event_bus.publish(TTSRequested(self._tts_text(speak_text)))
         self._set_state(RuntimeState.WAKEWORD_LISTENING, "wakeword_listening")
         self.event_bus.publish(ResumeWakeWordRequested())
 
@@ -164,7 +178,7 @@ class RuntimeOrchestrator:
         self.logger.info("OpenClaw assistant_text=%s", assistant_text)
         self.logger.info("OpenClaw speak_text=%s", speak_text)
         self.event_bus.publish(UIMessageRequested(f"错误：{error_message}", level="error"))
-        self.event_bus.publish(TTSRequested(str(speak_text)[:120]))
+        self.event_bus.publish(TTSRequested(self._tts_text(speak_text)))
         self.event_bus.publish(ErrorOccurred(str(error_message), original_event_id=event.event_id, source="tts"))
         self._set_state(RuntimeState.WAKEWORD_LISTENING, "wakeword_listening")
         self.event_bus.publish(ResumeWakeWordRequested())
