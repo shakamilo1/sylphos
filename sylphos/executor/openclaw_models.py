@@ -41,6 +41,11 @@ class OpenClawBridgeResult:
     text: str | None = None
     speak_text: str | None = None
     ui_text: str | None = None
+    raw_response: Any | None = None
+    assistant_text: str | None = None
+    execution_status: str | None = None
+    display_text: str | None = None
+    error_message: str | None = None
     actions: list[dict[str, Any]] = field(default_factory=list)
     files_changed: list[str] = field(default_factory=list)
     commands_run: list[dict[str, Any]] = field(default_factory=list)
