@@ -72,6 +72,20 @@ class RuntimeOrchestrator:
 
     def _mark(self, event: RuntimeEvent, step: str): self.context.mark_event(event, step)
 
+    def _tts_text(self, speak_text: Any) -> str:
+        text = str(speak_text)
+        max_chars = getattr(self.config, "TTS_MAX_SPEAK_CHARS", None)
+        if max_chars in (None, "", "none", "None"):
+            return text
+        try:
+            limit = int(max_chars)
+        except (TypeError, ValueError):
+            self.logger.warning("Ignoring invalid TTS_MAX_SPEAK_CHARS=%r", max_chars)
+            return text
+        if limit <= 0:
+            return text
+        return text[:limit]
+
     def _on_wakeword_detected(self, event):
         self._mark(event, "wakeword_detected")
         self._set_state(RuntimeState.LISTENING, "wakeword_detected")
@@ -141,15 +155,33 @@ class RuntimeOrchestrator:
         self._mark(event, "tool_execution_completed")
         result = getattr(event, "result", {})
         self.context.last_tool_result = result
-        message = result.get("message") or result.get("text") or result.get("stdout") or json.dumps(result, ensure_ascii=False)
+        raw_response = result.get("raw_response", result)
+        assistant_text = result.get("assistant_text") or result.get("text")
+        speak_text = result.get("speak_text") or assistant_text or result.get("summary") or result.get("stdout") or "任务完成"
+        display_text = result.get("display_text") or result.get("ui_text") or assistant_text or json.dumps(result, ensure_ascii=False)
+        self.logger.info("OpenClaw raw_response=%s", raw_response)
+        self.logger.info("OpenClaw assistant_text=%s", assistant_text)
+        self.logger.info("OpenClaw speak_text=%s", speak_text)
         self._set_state(RuntimeState.SPEAKING, "speaking")
-        self.event_bus.publish(UIMessageRequested(f"执行结果：{message}"))
-        self.event_bus.publish(TTSRequested(str(message)[:120]))
+        self.event_bus.publish(UIMessageRequested(f"执行结果：{display_text}"))
+        self.event_bus.publish(TTSRequested(self._tts_text(speak_text)))
         self._set_state(RuntimeState.WAKEWORD_LISTENING, "wakeword_listening")
         self.event_bus.publish(ResumeWakeWordRequested())
 
     def _on_tool_execution_failed(self, event):
-        self.event_bus.publish(ErrorOccurred(getattr(event, "error", "tool failed"), original_event_id=event.event_id))
+        result = getattr(event, "result", {}) or {}
+        raw_response = result.get("raw_response", result)
+        assistant_text = result.get("assistant_text")
+        error_message = result.get("error_message") or result.get("error") or getattr(event, "error", "tool failed")
+        speak_text = result.get("speak_text") or f"OpenClaw 执行失败：{error_message}"
+        self.logger.info("OpenClaw raw_response=%s", raw_response)
+        self.logger.info("OpenClaw assistant_text=%s", assistant_text)
+        self.logger.info("OpenClaw speak_text=%s", speak_text)
+        self.event_bus.publish(UIMessageRequested(f"错误：{error_message}", level="error"))
+        self.event_bus.publish(TTSRequested(self._tts_text(speak_text)))
+        self.event_bus.publish(ErrorOccurred(str(error_message), original_event_id=event.event_id, source="tts"))
+        self._set_state(RuntimeState.WAKEWORD_LISTENING, "wakeword_listening")
+        self.event_bus.publish(ResumeWakeWordRequested())
 
     def _on_error(self, event):
         if self._handling_error: return

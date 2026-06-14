@@ -44,6 +44,7 @@ _MEDIUM_RISK_RE = re.compile(
     r"git\s+(commit|push|pull|merge)|touch\s+|mkdir\s+|python\s+|node\s+|pytest|命令)"
 )
 _LOW_RISK_RE = re.compile(r"(?i)(查询|查看|打开|状态|读取|list|show|open|status|read|检查|搜索|find)")
+FALLBACK_SPEAK_TEXT = "任务完成"
 
 
 def classify_risk(text: str) -> str:
@@ -75,6 +76,122 @@ def _redact(value: Any) -> Any:
     if isinstance(value, str):
         return _SECRET_VALUE_RE.sub(r"\1\2<redacted>", value)
     return value
+
+
+def _clean_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def extract_speak_text_from_openclaw_response(response: Any) -> str:
+    """Extract the best user-speakable text from an OpenClaw response.
+
+    The function is intentionally transport-agnostic: CLI JSON, OpenAI-compatible
+    chat completions, accumulated streaming events, direct strings, and tool
+    result summaries are all normalized here.  The literal fallback is used only
+    when no readable content exists.
+    """
+
+    text = _extract_assistant_text(response) or _extract_error_text(response) or _extract_tool_text(response)
+    return text or FALLBACK_SPEAK_TEXT
+
+
+def _extract_assistant_text(response: Any) -> str | None:
+    if isinstance(response, str):
+        stripped = response.strip()
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped or None
+            return _extract_assistant_text(parsed) or stripped
+        return stripped or None
+    if not isinstance(response, dict):
+        return None
+
+    for key in ("assistant_text", "spoken_text", "speak_text", "final", "final_text", "answer", "response"):
+        if text := _clean_text(response.get(key)):
+            return text
+
+    choices = response.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if text := _content_to_text(content):
+                    return text
+            if text := _clean_text(first.get("text")):
+                return text
+
+    # Streaming/event accumulators often keep chunks under events/delta/content.
+    for key in ("events", "chunks", "stream"):
+        items = response.get(key)
+        if isinstance(items, list):
+            joined = "".join(filter(None, (_extract_assistant_text(item) for item in items)))
+            if joined.strip():
+                return joined.strip()
+
+    for key in ("content", "text"):
+        if text := _content_to_text(response.get(key)):
+            return text
+
+    result = response.get("result")
+    if isinstance(result, dict):
+        if text := _extract_assistant_text(result):
+            return text
+        payloads = result.get("payloads")
+        if isinstance(payloads, list):
+            for payload in payloads:
+                if text := _extract_assistant_text(payload):
+                    return text
+    return None
+
+
+def _content_to_text(content: Any) -> str | None:
+    if text := _clean_text(content):
+        return text
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                part = item.get("text") or item.get("content")
+                if isinstance(part, str):
+                    parts.append(part)
+        joined = "".join(parts).strip()
+        return joined or None
+    return None
+
+
+def _extract_tool_text(response: Any) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    for key in ("summary", "output", "stdout", "result"):
+        value = response.get(key)
+        if text := _clean_text(value):
+            return text
+        if isinstance(value, dict) and (text := _extract_tool_text(value)):
+            return text
+    return None
+
+
+def _extract_error_text(response: Any) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    ok = response.get("ok")
+    status = str(response.get("status") or response.get("execution_status") or "").lower()
+    failed = ok is False or status in {"failed", "error", "timeout"}
+    if not failed:
+        return None
+    error = response.get("error_message") or response.get("error") or response.get("message")
+    if isinstance(error, dict):
+        error = error.get("message") or error.get("detail") or json.dumps(error, ensure_ascii=False)
+    if text := _clean_text(error):
+        return f"OpenClaw 执行失败：{text}"
+    return "OpenClaw 执行失败。"
 
 
 def _duration_ms(started_at: datetime, finished_at: datetime) -> int:
@@ -339,6 +456,11 @@ class SylphosOpenClawBridge:
                 text=parsed["text"],
                 speak_text=parsed.get("speak_text"),
                 ui_text=parsed["ui_text"],
+                raw_response=parsed.get("raw_response"),
+                assistant_text=parsed.get("assistant_text"),
+                execution_status=parsed["status"] or ("success" if completed.returncode == 0 else "failed"),
+                display_text=parsed["ui_text"],
+                error_message=parsed.get("error") if completed.returncode == 0 else (parsed.get("error") or stderr.strip() or "OpenClaw CLI exited with a non-zero code."),
                 actions=parsed["actions"],
                 files_changed=parsed["files_changed"],
                 commands_run=[
@@ -397,8 +519,10 @@ class SylphosOpenClawBridge:
         try:
             client_result = client.ask(request.text, session_key=session_key)
             metadata = dict(getattr(client_result, "metadata", {}) or {})
+            raw_response = metadata.get("raw_response")
             text = getattr(client_result, "raw_text", None) or getattr(client_result, "spoken_text", None)
-            spoken_text = getattr(client_result, "spoken_text", None)
+            assistant_text = _extract_assistant_text(raw_response) if raw_response is not None else _clean_text(text)
+            spoken_text = assistant_text if raw_response is not None else getattr(client_result, "spoken_text", None)
             status = str(getattr(client_result, "status", "success") or "success")
             ok = self._is_success_status(status)
             result = OpenClawBridgeResult(
@@ -408,6 +532,11 @@ class SylphosOpenClawBridge:
                 text=text,
                 speak_text=spoken_text if ok else None,
                 ui_text=_clip(text, self.config.max_ui_chars),
+                raw_response=raw_response,
+                assistant_text=assistant_text,
+                execution_status=status,
+                display_text=_clip(text, self.config.max_ui_chars),
+                error_message=None if ok else str(metadata.get("error") or text or f"OpenClaw client returned status: {status}"),
                 actions=metadata.get("actions") if isinstance(metadata.get("actions"), list) else [],
                 files_changed=metadata.get("files_changed") if isinstance(metadata.get("files_changed"), list) else [],
                 commands_run=metadata.get("commands_run") if isinstance(metadata.get("commands_run"), list) else [],
@@ -547,12 +676,18 @@ class SylphosOpenClawBridge:
             or stderr.strip()
             or None
         )
-        speak_text = payload_text or data.get("spoken_text") or data.get("speak_text") or data.get("text") or data.get("summary")
+        raw_response: Any = data or stripped
+        assistant_text = _extract_assistant_text(raw_response)
+        speak_text = extract_speak_text_from_openclaw_response(raw_response)
+        if speak_text == FALLBACK_SPEAK_TEXT and stderr.strip():
+            speak_text = stderr.strip()
         ui_text = payload_text or data.get("ui_text") or text
         return {
             "text": text,
             "speak_text": speak_text if isinstance(speak_text, str) else None,
             "ui_text": _clip(ui_text, self.config.max_ui_chars),
+            "raw_response": raw_response,
+            "assistant_text": assistant_text,
             "actions": data.get("actions") if isinstance(data.get("actions"), list) else [],
             "files_changed": data.get("files_changed") if isinstance(data.get("files_changed"), list) else [],
             "commands_run": data.get("commands_run") if isinstance(data.get("commands_run"), list) else [],
@@ -566,11 +701,21 @@ class SylphosOpenClawBridge:
         result.duration_ms = _duration_ms(started, finished)
 
     def _finalize_result(self, request: OpenClawRequest, result: OpenClawBridgeResult) -> None:
+        if result.raw_response is None:
+            result.raw_response = result.text or result.error
+        if not result.assistant_text:
+            result.assistant_text = _extract_assistant_text(result.raw_response)
+        result.execution_status = result.execution_status or result.status
+        result.error_message = result.error_message or result.error
         if not result.speak_text:
             result.speak_text = self._make_speak_text(result)
         if result.ui_text is None:
             result.ui_text = _clip(result.text or result.error, self.config.max_ui_chars)
+        result.display_text = result.display_text or result.ui_text
         self._write_audit_log(request, result)
+        self.logger.info("OpenClaw raw_response=%s", _clip(json.dumps(_redact(result.raw_response), ensure_ascii=False, default=str), self.config.max_ui_chars * 4))
+        self.logger.info("OpenClaw assistant_text=%s", result.assistant_text)
+        self.logger.info("OpenClaw speak_text=%s", result.speak_text)
         self.logger.info(
             "OpenClaw request finished request_id=%s ok=%s status=%s exit_code=%s duration_ms=%s",
             request.request_id,
@@ -593,7 +738,7 @@ class SylphosOpenClawBridge:
         if not result.ok:
             error = result.error or result.text or "OpenClaw 执行失败。"
             return _clip(f"OpenClaw 执行失败：{error}", limit) or "OpenClaw 执行失败。"
-        text = result.text or result.ui_text or "处理完成。"
+        text = result.assistant_text or result.text or result.ui_text or FALLBACK_SPEAK_TEXT
         if len(text) <= limit:
             return text
         return "处理完成，详细结果已记录或显示。"

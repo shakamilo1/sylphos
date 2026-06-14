@@ -157,6 +157,8 @@ class RuntimeApp:
                 self.event_bus,
                 audio_hub=audio,
                 enabled=audio_enabled,
+                console_wake_score_display=getattr(self.config, "CONSOLE_WAKE_SCORE_DISPLAY", "status"),
+                wakeword_score_log_interval_seconds=float(getattr(self.config, "WAKEWORD_SCORE_LOG_INTERVAL_SECONDS", 1.0)),
                 **_wakeword_kwargs_from_config(self.config),
             ),
         )

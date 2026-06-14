@@ -5,7 +5,7 @@ import importlib.resources as ir
 from pathlib import Path
 
 from sylphos.runtime.event_bus import EventBus
-from sylphos.runtime.events import PauseWakeWordRequested, ResumeWakeWordRequested, WakeWordDetected
+from sylphos.runtime.events import PauseWakeWordRequested, ResumeWakeWordRequested, WakeWordDetected, WakeWordScoreUpdated
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -13,16 +13,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 class OpenWakeWordEngineAdapter:
     """Adapter wrapping existing voice.wakeword engine without changing detection logic."""
-    def __init__(self, event_bus: EventBus, *, audio_hub=None, enabled: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        audio_hub=None,
+        enabled: bool = False,
+        console_wake_score_display: str = "status",
+        wakeword_score_log_interval_seconds: float = 1.0,
+        **kwargs,
+    ) -> None:
         self.event_bus = event_bus; self.audio_hub = audio_hub; self.enabled = enabled; self.kwargs = kwargs
+        self.console_wake_score_display = console_wake_score_display
+        self.wakeword_score_log_interval_seconds = wakeword_score_log_interval_seconds
         self.logger = logging.getLogger(self.__class__.__name__)
         self._engine = None
     def _ensure_engine(self):
         if self._engine is None:
             self._validate_model_config()
             from voice.wakeword.openwakeword_engine import OpenWakeWordEngine
-            self._engine = OpenWakeWordEngine(**self.kwargs)
+            self._engine = OpenWakeWordEngine(
+                **self.kwargs,
+                score_log_interval_seconds=self.wakeword_score_log_interval_seconds,
+                log_scores_to_info=self.console_wake_score_display == "log",
+            )
             self._engine.set_callback(lambda name, score: self.event_bus.publish(WakeWordDetected(name=name, score=score)))
+            if self.console_wake_score_display == "status":
+                self._engine.set_score_callback(
+                    lambda name, score: self.event_bus.publish(WakeWordScoreUpdated(name=name, score=score))
+                )
             if self.audio_hub is not None:
                 self.audio_hub.subscribe(self._engine.consume)
         return self._engine

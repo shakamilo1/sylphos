@@ -43,6 +43,12 @@ class WakeWordDetected(RuntimeEvent):
         RuntimeEvent.__init__(self, "wakeword.detected", source=source, metadata=metadata or {}); self.name = name; self.score = score
 
 @dataclass(slots=True)
+class WakeWordScoreUpdated(RuntimeEvent):
+    name: str = ""; score: float = 0.0
+    def __init__(self, name: str = "", score: float = 0.0, *, source: str = "wakeword", metadata: dict[str, Any] | None = None):
+        RuntimeEvent.__init__(self, "wakeword.score.updated", source=source, metadata=metadata or {}); self.name = name; self.score = score
+
+@dataclass(slots=True)
 class AudioInputStarted(RuntimeEvent):
     def __init__(self, *, source: str = "audio", metadata: dict[str, Any] | None = None): RuntimeEvent.__init__(self, "audio.input.started", source=source, metadata=metadata or {})
 @dataclass(slots=True)
