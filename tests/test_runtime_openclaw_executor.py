@@ -111,3 +111,149 @@ def test_openclaw_executor_false_dry_run_calls_cli_instead_of_dry_run(monkeypatc
     assert result["status"] != "dry_run"
     assert result["dry_run"] is False
     assert not any(action.get("dry_run") is True for action in result.get("actions", []))
+
+
+def test_openclaw_extractor_speaks_plain_string():
+    from sylphos.executor.openclaw_bridge import extract_speak_text_from_openclaw_response
+
+    assert extract_speak_text_from_openclaw_response("真实回复") == "真实回复"
+
+
+def test_openclaw_extractor_speaks_assistant_text():
+    from sylphos.executor.openclaw_bridge import extract_speak_text_from_openclaw_response
+
+    assert extract_speak_text_from_openclaw_response({"assistant_text": "助手最终回复"}) == "助手最终回复"
+
+
+def test_openclaw_extractor_speaks_openai_compatible_content():
+    from sylphos.executor.openclaw_bridge import extract_speak_text_from_openclaw_response
+
+    response = {"choices": [{"message": {"content": "OpenAI 格式回复"}}]}
+    assert extract_speak_text_from_openclaw_response(response) == "OpenAI 格式回复"
+
+
+def test_openclaw_extractor_falls_back_only_for_status_only():
+    from sylphos.executor.openclaw_bridge import extract_speak_text_from_openclaw_response
+
+    assert extract_speak_text_from_openclaw_response({"ok": True, "status": "success"}) == "任务完成"
+
+
+def test_openclaw_extractor_speaks_short_error():
+    from sylphos.executor.openclaw_bridge import extract_speak_text_from_openclaw_response
+
+    assert extract_speak_text_from_openclaw_response({"ok": False, "status": "failed", "error": "网关不可用"}) == "OpenClaw 执行失败：网关不可用"
+
+
+def test_runtime_tts_receives_speak_text_not_fixed_status(monkeypatch):
+    from types import SimpleNamespace
+
+    from sylphos.runtime.app import RuntimeApp
+    from sylphos.runtime.events import TextInputReceived
+
+    spoken = []
+
+    class FakeTTS:
+        def speak(self, text):
+            spoken.append(text)
+
+    class FakeExecutor:
+        def execute(self, request, context):
+            return {
+                "ok": True,
+                "status": "success",
+                "raw_response": {"assistant_text": "这是 OpenClaw 的真实回复"},
+                "assistant_text": "这是 OpenClaw 的真实回复",
+                "execution_status": "success",
+                "speak_text": "这是 OpenClaw 的真实回复",
+                "display_text": "这是 OpenClaw 的真实回复",
+                "error_message": None,
+            }
+
+    config = SimpleNamespace(
+        AUDIO_ENABLED=False,
+        INPUT_RATE=44100,
+        AUDIO_SAMPLE_RATE=44100,
+        CHANNELS=1,
+        AUDIO_CHANNELS=1,
+        BLOCKSIZE=4410,
+        AUDIO_BLOCKSIZE=4410,
+        DTYPE="float32",
+        STT_PROVIDER="dummy",
+        DUMMY_STT_TEXT="请回复真实内容",
+        TTS_PROVIDER="dummy",
+        TOOL_EXECUTOR_PROVIDER="openclaw",
+        OPENCLAW_DRY_RUN=True,
+        ASR_POST_PROCESSORS=[],
+    )
+    app = RuntimeApp(config).build()
+    app.registry.register("tts", SimpleNamespace(start=lambda: app.event_bus.subscribe("tts.requested", lambda e: FakeTTS().speak(e.text)), close=lambda: None))
+    app.registry.register_executor("openclaw", FakeExecutor())
+
+    try:
+        app.start()
+        app.event_bus.publish(TextInputReceived("请回复真实内容", source="test"))
+    finally:
+        app.close()
+
+    assert "这是 OpenClaw 的真实回复" in spoken
+    assert "任务完成" not in spoken
+
+
+def test_runtime_tts_does_not_truncate_long_speak_text_by_default(monkeypatch):
+    from types import SimpleNamespace
+
+    from sylphos.runtime.app import RuntimeApp
+    from sylphos.runtime.events import TextInputReceived
+
+    long_text = "OpenClaw 返回的长回复。" * 20
+    spoken = []
+
+    class FakeExecutor:
+        def execute(self, request, context):
+            return {
+                "ok": True,
+                "status": "success",
+                "raw_response": {"assistant_text": long_text},
+                "assistant_text": long_text,
+                "execution_status": "success",
+                "speak_text": long_text,
+                "display_text": long_text,
+                "error_message": None,
+            }
+
+    config = SimpleNamespace(
+        AUDIO_ENABLED=False,
+        INPUT_RATE=44100,
+        AUDIO_SAMPLE_RATE=44100,
+        CHANNELS=1,
+        AUDIO_CHANNELS=1,
+        BLOCKSIZE=4410,
+        AUDIO_BLOCKSIZE=4410,
+        DTYPE="float32",
+        STT_PROVIDER="dummy",
+        DUMMY_STT_TEXT="请回复长文本",
+        TTS_PROVIDER="dummy",
+        TTS_MAX_SPEAK_CHARS=None,
+        TOOL_EXECUTOR_PROVIDER="openclaw",
+        OPENCLAW_DRY_RUN=True,
+        ASR_POST_PROCESSORS=[],
+    )
+    app = RuntimeApp(config).build()
+    app.registry.register(
+        "tts",
+        SimpleNamespace(
+            start=lambda: app.event_bus.subscribe("tts.requested", lambda event: spoken.append(event.text)),
+            close=lambda: None,
+        ),
+    )
+    app.registry.register_executor("openclaw", FakeExecutor())
+
+    try:
+        app.start()
+        app.event_bus.publish(TextInputReceived("请回复长文本", source="test"))
+    finally:
+        app.close()
+
+    assert len(long_text) > 120
+    assert long_text in spoken
+    assert all(text == long_text for text in spoken if text.startswith("OpenClaw 返回的长回复。"))

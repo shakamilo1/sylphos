@@ -35,12 +35,18 @@ class OpenWakeWordEngine:
         wakeword_model_name: str | None = None,
         wakeword_model_relative_path: str | None = None,
         on_detect: Callable[[str, float], None] | None = None,
+        on_score: Callable[[str, float], None] | None = None,
+        score_log_interval_seconds: float = 1.0,
+        log_scores_to_info: bool = False,
     ) -> None:
         self.input_rate = input_rate
         self.target_rate = target_rate
         self.threshold = threshold
         self.cooldown_seconds = cooldown_seconds
         self.on_detect = on_detect
+        self.on_score = on_score
+        self.score_log_interval_seconds = score_log_interval_seconds
+        self.log_scores_to_info = log_scores_to_info
 
         self._logger = logging.getLogger(self.__class__.__name__)
         self._last_trigger_time = 0.0
@@ -142,6 +148,10 @@ class OpenWakeWordEngine:
         """注册唤醒命中后的回调，由 RuntimeOrchestrator 注入 EventBus 发布逻辑。"""
         self.on_detect = callback
 
+    def set_score_callback(self, callback: Callable[[str, float], None]) -> None:
+        """注册唤醒分数更新回调，用于交互式控制台状态区刷新。"""
+        self.on_score = callback
+
     def pause(self) -> None:
         """暂停检测（录音阶段调用，防止自激触发）。"""
         self._enabled = False
@@ -185,8 +195,13 @@ class OpenWakeWordEngine:
         max_score = float(scores[max_name])
 
         now = time.time()
-        if now - self._last_print_time >= 1.0:
-            self._logger.info("[wake max] %s: %.3f", max_name, max_score)
+        if now - self._last_print_time >= self.score_log_interval_seconds:
+            if self.on_score:
+                self.on_score(max_name, max_score)
+            if self.log_scores_to_info:
+                self._logger.info("[wake max] %s: %.3f", max_name, max_score)
+            else:
+                self._logger.debug("[wake max] %s: %.3f", max_name, max_score)
             self._last_print_time = now
 
         if max_score < self.threshold:

@@ -38,9 +38,13 @@ def main() -> None:
     app = RuntimeApp(config).build()
     app.start()
     print(HELP)
+    console_feedback = app.registry.get("console_feedback")
+    wake_score_display = str(getattr(config, "CONSOLE_WAKE_SCORE_DISPLAY", "status") or "status").lower()
     try:
         while True:
             try:
+                if wake_score_display == "status" and console_feedback is not None:
+                    print(console_feedback.render_status())
                 line = input("sylphos> ").strip()
             except EOFError:
                 break
@@ -60,6 +64,10 @@ def main() -> None:
                 app.event_bus.publish(CancelCurrentTaskRequested(source="console")); continue
             if line == "state":
                 print(json.dumps(app.context_snapshot(), ensure_ascii=False, default=str, indent=2)); continue
+            if line == "watch wake":
+                if console_feedback is not None:
+                    print(console_feedback.render_status())
+                continue
             if line.startswith("t "):
                 app.event_bus.publish(TextInputReceived(line[2:].strip(), source="console")); continue
             if line.startswith("asr "):
