@@ -40,7 +40,7 @@ sylphos/
 ├─ requirements*.txt                 # 运行、ASR、TTS 依赖清单
 ├─ environment.yml                   # Conda 环境配置
 ├─ pyproject.toml                    # 项目与 pytest 配置
-├─ readme.me / readme.txt            # 项目说明文件
+├─ readme.md / readme.txt            # 项目说明文件
 └─ .github/workflows/ci.yml          # CI 配置
 ```
 
