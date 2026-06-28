@@ -3,7 +3,7 @@ from __future__ import annotations
 """语音链路配置。
 
 该模块提供 wakeword + 录音相关默认参数，并在可用时加载
-`config/local_config.py` 覆盖默认值（由 setup_wakeword 脚本生成）。
+项目根目录 `local_config.py` 覆盖默认值（由 setup_config.py 生成）。
 """
 
 # 音频输入
@@ -43,7 +43,24 @@ VAD_CHECK_INTERVAL_MS = 200
 VAD_SAMPLE_RATE = 16000
 
 
-try:
-    from config.local_config import *  # noqa: F403,F401
-except ImportError:
-    pass
+def _load_local_config() -> None:
+    """Load project-root local_config.py overrides without exposing personal data in git."""
+
+    import importlib.util
+    from pathlib import Path
+
+    local_config = Path(__file__).resolve().parents[1] / "local_config.py"
+    if not local_config.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("sylphos_local_config", local_config)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载本地配置文件: {local_config}")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise RuntimeError(f"本地配置文件加载失败 {local_config}: {exc}") from exc
+    globals().update({name: getattr(module, name) for name in dir(module) if name.isupper()})
+
+
+_load_local_config()

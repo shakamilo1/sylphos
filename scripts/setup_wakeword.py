@@ -4,7 +4,7 @@ from __future__ import annotations
 
 基于当前仓库真实配置机制：
 - 默认配置：config/voice.py
-- 本地覆盖：config/local_config.py
+- 本地覆盖：项目根目录 local_config.py（不会提交到 Git）
 """
 
 import importlib.resources as ir
@@ -15,7 +15,7 @@ import sounddevice as sd
 from config import voice as voice_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-LOCAL_CONFIG_PATH = BASE_DIR / "config" / "local_config.py"
+LOCAL_CONFIG_PATH = BASE_DIR / "local_config.py"
 
 
 def get_openwakeword_model_dir() -> Path:
@@ -170,7 +170,10 @@ def choose_record_mode() -> str:
 
 
 def write_local_config(config_data: dict[str, object]) -> None:
-    content = f'''AUDIO_INPUT_DEVICE_INDEX = {repr(config_data['device_index'])}
+    content = f'''# Sylphos 本机个人配置。
+# 不应提交到 Git；请保留在本机或复制为私有备份。
+
+AUDIO_INPUT_DEVICE_INDEX = {repr(config_data['device_index'])}
 AUDIO_INPUT_DEVICE_NAME = {repr(config_data['device_name'])}
 
 INPUT_RATE = {config_data['input_rate']}
@@ -200,8 +203,25 @@ VAD_CHECK_INTERVAL_MS = {config_data['vad_check_interval_ms']}
 VAD_SAMPLE_RATE = {config_data['vad_sample_rate']}
 '''
 
-    LOCAL_CONFIG_PATH.write_text(content, encoding="utf-8")
-    print(f"\n已生成配置文件：{LOCAL_CONFIG_PATH}")
+    target = LOCAL_CONFIG_PATH
+    if target.exists():
+        print(f"\n检测到已有个人配置：{target}")
+        print("默认不会覆盖已有 local_config.py。")
+        print("[1] 保留现有 local_config.py，并写入 local_config.generated.py")
+        print("[2] 保留现有 local_config.py，并写入 local_config.new.py")
+        print("[3] 覆盖现有 local_config.py")
+        choice = ask_with_default("请选择", "1")
+        if choice == "3":
+            confirm = ask_with_default("确认覆盖现有 local_config.py？输入 overwrite 继续", "keep")
+            if confirm != "overwrite":
+                print("已取消覆盖；写入 local_config.generated.py。")
+                target = BASE_DIR / "local_config.generated.py"
+        elif choice == "2":
+            target = BASE_DIR / "local_config.new.py"
+        else:
+            target = BASE_DIR / "local_config.generated.py"
+    target.write_text(content, encoding="utf-8")
+    print(f"\n已生成配置文件：{target}")
 
 
 def main() -> None:

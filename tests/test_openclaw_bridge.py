@@ -291,7 +291,7 @@ def test_cli_json_stdout_spoken_text_maps_to_speak_text(tmp_path, monkeypatch):
         )
         stderr = ""
 
-    resolved_path = r"C:\Users\x\AppData\Roaming\npm\openclaw.cmd"
+    resolved_path = str(Path("AppData") / "Roaming" / "npm" / "openclaw.cmd")
     run_calls = []
 
     def fake_run(command, **kwargs):

@@ -235,7 +235,7 @@ sylphos/
 当前状态：已实现
 
 作用：
-- 按层加载配置：默认配置、根目录 `local_config.py`、`sylphos/config/local_config.py`、项目根 `config/local_config.py`、环境变量覆盖。
+- 按层加载配置：默认配置、根目录 `local_config.py`、`sylphos/local_config.py`、项目根 `local_config.py`、环境变量覆盖。
 
 主要被谁调用：
 - `run_sylphos_runtime.py`、`RuntimeApp` 和配置测试。
@@ -1030,12 +1030,12 @@ TTS 在 Sylphos 中的位置：
 维护注意：
 - 默认配置必须安全、可提交、无私密信息。
 
-### `sylphos/config/local_config.py.example`
+### `local_config.example.py`
 
 当前状态：模板
 
 作用：
-- 包内本地配置模板，供用户复制为 `sylphos/config/local_config.py` 后按本机环境覆盖。
+- 包内本地配置模板，供用户复制为 `sylphos/local_config.py` 后按本机环境覆盖。
 
 维护注意：
 - 模板只能使用占位符，例如 `<OPENCLAW_TOKEN>`、`<MODEL_PATH>`。
@@ -1054,7 +1054,7 @@ TTS 在 Sylphos 中的位置：
 维护注意：
 - 与 `sylphos/config/defaults.py` 有部分重叠，后续建议统一配置来源。
 
-### `config/local_config.py`
+### `local_config.py`
 
 当前状态：本地配置
 
@@ -1526,7 +1526,7 @@ ConsoleFeedback / 日志 / 音频输出
 ### 后续建议
 
 1. 新增标准 `README.md`，用一页说明推荐启动路径：Runtime、OpenClaw、STT、TTS、wakeword。
-2. 为 `config/local_config.py` 提供脱敏的 `.example`，并在文档中说明不要提交真实密钥或个人路径。
+2. 为 `local_config.py` 提供脱敏的 `.example`，并在文档中说明不要提交真实密钥或个人路径。
 3. 明确 `voice/` 是否为 legacy/experimental；如果是，文档和目录名应标注清楚。
 4. 为 Runtime 增加一个统一健康检查入口，串联配置、OpenClaw、STT、TTS、音频设备可用性。
 5. 将手动验证脚本与 pytest 测试命名区分，降低维护者误解。

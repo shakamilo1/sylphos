@@ -7,7 +7,7 @@
 ## 1) Python 3.12 环境
 
 ```powershell
-cd H:\sylphos1\sylphos
+cd <repo-root>
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel

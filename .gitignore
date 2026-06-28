@@ -61,3 +61,12 @@ sylphos/config/local_config.py
 *.token
 *.secret
 secrets/
+
+# Local personal config and generated runtime files
+local_config.py
+*.local.py
+.env
+recordings/
+logs/
+*.wav
+**pycache**/

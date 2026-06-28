@@ -16,7 +16,7 @@ Sylphos 当前版本使用说明（语音链路）
 二、语音链路相关目录与脚本
 ------------------------
 - `config/voice.py`：默认配置
-- `config/local_config.py`：本地覆盖配置（由向导生成）
+- `local_config.py`：本地覆盖配置（由向导生成）
 - `scripts/setup_wakeword.py`：配置向导
 - `scripts/test_wakeword_pipeline.py`：统一测试 CLI
 - `scripts/run_wakeword_pipeline.py`：正式运行入口
@@ -40,7 +40,7 @@ Sylphos 当前版本使用说明（语音链路）
 三、从零开始安装（Windows + 项目内 .venv）
 ----------------------------------------
 ```powershell
-git clone git@github.com:shakamilo1/sylphos.git
+git clone git@github.com:example-org/sylphos.git
 cd sylphos
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -155,12 +155,12 @@ python -m sylphos.voice.tts.healthcheck --text "你好。" --runtime --json
 --------------
 配置加载顺序：
 1) 先加载 `config/voice.py` 默认值
-2) 若存在 `config/local_config.py`，同名配置覆盖默认值
+2) 若存在 `local_config.py`，同名配置覆盖默认值
 
 十一、运行配置向导
 ----------------
 ```powershell
-python -m scripts.setup_wakeword
+python -m setup_config
 ```
 
-向导会覆盖/写入 `config/local_config.py`，主要包含输入设备、采样率、声道、blocksize、dtype、wakeword 模型来源、阈值、冷却时间、录音目录、定时录音参数和 VAD 配置。
+向导会保护已有 `local_config.py`，不存在时写入 `local_config.py`，主要包含输入设备、采样率、声道、blocksize、dtype、wakeword 模型来源、阈值、冷却时间、录音目录、定时录音参数和 VAD 配置。

@@ -33,7 +33,7 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 9880
 DEFAULT_OUTPUT_PATH = "~/sylphos_outputs/tts/latest_tts.wav"
-DEFAULT_PROMPT_DIR = "/home/shakamilo/sylphos_services/cosyvoice3/prompts"
+DEFAULT_PROMPT_DIR = "~/sylphos_services/cosyvoice3/prompts"
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
 VALID_MODEL_VERSIONS = {"base", "rl"}
@@ -157,7 +157,7 @@ def _preflight_errors(*, model_path: str | None = None, check_rl_model: bool = F
         errors.append(
             "CosyVoice model path does not exist or is not a directory: "
             f"{selected_model_path}. Set COSYVOICE_MODEL_PATH to the full model directory, for example "
-            "/home/shakamilo/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B."
+            "~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B."
         )
 
     if check_rl_model:

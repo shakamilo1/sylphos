@@ -88,25 +88,11 @@ def load_config() -> SimpleNamespace:
 
     roots = _candidate_roots()
 
-    # 2. Existing root-level local_config.py override. Loaded by file path so
-    # users do not need to manually add the project root to sys.path.
+    # 2. Project-root local_config.py is the only supported personal config
+    # file. It is loaded by path so users do not need to edit sys.path.
     _apply_module(data, _load_first_existing_file((root / "local_config.py" for root in roots), "sylphos_root_local_config"))
 
-    # 3. Existing package-local sylphos/config/local_config.py override.
-    _apply_module(data, _import_optional_module("sylphos.config.local_config"))
-
-    # 4. New project-root config/local_config.py override.  This supports both
-    # Windows .\config\local_config.py and Linux/macOS ./config/local_config.py
-    # without copying the file to the root or modifying sys.path.
-    _apply_module(
-        data,
-        _load_first_existing_file(
-            (root / "config" / "local_config.py" for root in roots),
-            "sylphos_project_config_local_config",
-        ),
-    )
-
-    # 5. Environment variables have the highest priority and keep the existing
+    # 3. Environment variables have the highest priority and keep the existing
     # coercion behavior based on the current default/local value type.
     for name, current in list(data.items()):
         if name in os.environ:

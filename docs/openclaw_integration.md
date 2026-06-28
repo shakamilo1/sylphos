@@ -50,7 +50,7 @@ Sylphos Python -> local Node bridge process -> @openclaw/sdk -> OpenClaw Gateway
 
 ## 快速配置 OpenClaw 接口
 
-Sylphos 的 OpenClaw 接口通过环境变量配置；如果环境变量不存在，则使用 `sylphos/config/settings.py` 中的安全默认值。`sylphos/config/local_config.py.example` 只是给本地配置做参考模板，当前运行时不会自动导入真实 `local_config.py`。
+Sylphos 的 OpenClaw 接口通过环境变量配置；如果环境变量不存在，则使用 `sylphos/config/settings.py` 中的安全默认值。`local_config.example.py` 只是给本地配置做参考模板，运行时会自动加载项目根目录的 `local_config.py`。
 
 最小配置示例：
 
@@ -83,7 +83,7 @@ python scripts/test_openclaw_text.py "打开 Sylphos 项目"
 | `OPENCLAW_TIMEOUT_SECONDS` | `120` | HTTP 请求超时。 |
 | `OPENCLAW_MAX_SPOKEN_CHARS` | `300` | 朗读文本最大长度。 |
 
-可参考 `sylphos/config/local_config.py.example`，但不要提交包含真实密钥的 `local_config.py` 或 `.env`。
+可参考 `local_config.example.py`，但不要提交包含真实密钥的 `local_config.py` 或 `.env`。
 
 ## 健康检测
 
