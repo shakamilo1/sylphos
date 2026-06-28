@@ -54,7 +54,7 @@ class OpenWakeWordEngineAdapter:
             raise RuntimeError(
                 "AUDIO_ENABLED=True requires an explicit wakeword model. Configure "
                 "WAKEWORD_MODEL_PATH, WAKEWORD_MODEL_RELATIVE_PATH, or WAKEWORD_MODEL_NAME "
-                "in config/local_config.py. Refusing to load the openWakeWord default model "
+                "in local_config.py. Refusing to load the openWakeWord default model "
                 "implicitly."
             )
 

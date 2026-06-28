@@ -58,8 +58,8 @@ if args.model_path != "":
     owwModel = Model(
         wakeword_models=[args.model_path],
         inference_framework=args.inference_framework,
-        melspec_model_path=r"H:\\sylphos\\models\\wakeword\\melspectrogram.onnx",
-        embedding_model_path=r"H:\\sylphos\\models\\wakeword\\embedding_model.onnx",
+        melspec_model_path="models/wakeword/melspectrogram.onnx",
+        embedding_model_path="models/wakeword/embedding_model.onnx",
     )
 else:
     owwModel = Model(inference_framework=args.inference_framework)

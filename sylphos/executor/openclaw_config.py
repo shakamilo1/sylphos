@@ -4,10 +4,9 @@ from __future__ import annotations
 
 The defaults are safe for local development and contain no secrets. Values can
 be overridden with environment variables or an untracked
-``sylphos/config/local_config.py`` file that defines matching names.
+project-root ``local_config.py`` file that defines matching names.
 """
 
-import importlib
 import importlib.util
 import os
 from dataclasses import dataclass
@@ -124,11 +123,13 @@ def _gateway_url_to_http_base_url(gateway_url: str | None) -> str | None:
 
 def _load_local_overrides() -> dict[str, Any]:
     module = None
-    for module_name in ("sylphos.config.local_config", "local_config"):
-        spec = importlib.util.find_spec(module_name)
-        if spec is not None:
-            module = importlib.import_module(module_name)
-            break
+    local_config_path = Path(__file__).resolve().parents[2] / "local_config.py"
+    if local_config_path.is_file():
+        spec = importlib.util.spec_from_file_location("sylphos_openclaw_local_config", local_config_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Failed to load local config file: {local_config_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
     if module is None:
         return {}
     names = {
@@ -202,7 +203,7 @@ def load_openclaw_bridge_config() -> OpenClawBridgeConfig:
     """Load OpenClaw bridge settings from the same layered config as Runtime.
 
     The Runtime loader already merges defaults, root/package/project-local
-    config files (including ``config/local_config.py``), and environment
+    project-root ``local_config.py``, and environment
     variables.  Reusing it here keeps ``load_config().OPENCLAW_DRY_RUN`` and
     ``load_openclaw_bridge_config().dry_run`` synchronized.
     """

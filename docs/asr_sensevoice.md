@@ -7,7 +7,7 @@
 
 ```powershell
 # 创建独立 venv
-cd H:\sylphos
+cd <repo-root>
 py -3.12 -m venv .venv-asr
 .\.venv-asr\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel

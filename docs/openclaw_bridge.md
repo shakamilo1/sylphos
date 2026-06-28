@@ -94,7 +94,7 @@ OPENCLAW_SESSION_NAME = "sylphos"
 - `OPENCLAW_WORKSPACE` 表示 OpenClaw 执行某个用户任务时所在的工作目录，例如一个项目目录或临时操作目录。
 - `~/.openclaw/` 通常更适合存放 OpenClaw 自身配置、缓存、会话状态或凭据，不应与当前任务 workspace 混用。
 
-桥接层不会写死个人路径。workspace 默认为 `None`，可通过环境变量或未提交的 `sylphos/config/local_config.py` 覆盖。
+桥接层不会写死个人路径。workspace 默认为 `None`，可通过环境变量或未提交的 `sylphos/local_config.py` 覆盖。
 
 ## 7. OpenClawBridgeResult 如何分流
 

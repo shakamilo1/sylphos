@@ -38,7 +38,7 @@ def _audio_device_from_config(config):
 
 
 def _wakeword_kwargs_from_config(config) -> dict:
-    """Map existing wakeword config.py/config/local_config.py fields to the adapter."""
+    """Map existing wakeword config.py/local_config.py fields to the adapter."""
 
     model_name = getattr(config, "WAKEWORD_MODEL_NAME", None)
     model_path = getattr(config, "WAKEWORD_MODEL_PATH", None)
